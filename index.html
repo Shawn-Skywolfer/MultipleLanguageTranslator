@@ -44,7 +44,7 @@
       <div class="grid3">
         <div class="field"><label>Provider 名称</label><input id="providerName" value="AIHubMix" /></div>
         <div class="field"><label>Base URL</label><input id="baseUrl" value="https://aihubmix.com/v1" /></div>
-        <div class="field"><label>API Key</label><input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" /></div>
+        <div class="field"><label>API Key</label><input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" /><div class="small">请只粘贴 Key 本身；不要带中文空格、中文引号、换行、备注文字或 Bearer 前缀。</div></div>
       </div>
       <div class="grid3">
         <div class="field"><label>当前模型 ID</label><input id="modelId" value="gpt-5.4" placeholder="例如 gpt-4o-mini" /></div>
@@ -146,7 +146,32 @@ function stat(){ $('statFiles').textContent=state.translateFiles.length; $('stat
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function sanitizeBaseUrl(url){ return String(url||'').trim().replace(/\/+$/,''); }
 function endpoint(path){ return sanitizeBaseUrl($('baseUrl').value) + '/' + path.replace(/^\//,''); }
-function apiHeaders(){ const key=$('apiKey').value.trim(); return {'Content-Type':'application/json','Authorization':'Bearer '+key}; }
+function cleanApiKey(raw){
+  let key = String(raw || '');
+  key = key.replace(/[\u200B-\u200D\uFEFF]/g, '');
+  key = key.replace(/[\r\n\t]/g, '');
+  key = key.replace(/[\u00A0\u1680\u180E\u2000-\u200A\u202F\u205F\u3000]/g, ' ');
+  key = key.trim();
+  key = key.replace(/^["'“”‘’]+|["'“”‘’]+$/g, '');
+  key = key.replace(/^Bearer\s+/i, '').trim();
+  return key;
+}
+function assertHeaderSafe(name, value){
+  for (const ch of String(value)) {
+    const code = ch.charCodeAt(0);
+    if (code > 255) {
+      throw new Error(`${name} 中包含非英文/非半角字符「${ch}」。请重新复制 API Key，注意不要带中文空格、中文引号、换行或备注文字。`);
+    }
+  }
+}
+function apiHeaders(){
+  const key = cleanApiKey($('apiKey').value);
+  if (!key) throw new Error('API Key 为空，请先填写 API Key。');
+  const authorization = 'Bearer ' + key;
+  assertHeaderSafe('API Key', key);
+  assertHeaderSafe('Authorization header', authorization);
+  return {'Content-Type':'application/json','Authorization':authorization};
+}
 function escapeHtml(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fileStem(name){ return name.replace(/\.csv$/i,''); }
 function uniqueName(existing,name){ if(!existing.has(name)){existing.add(name);return name;} const i=name.lastIndexOf('.'), stem=i>=0?name.slice(0,i):name, suf=i>=0?name.slice(i):''; let n=1; while(true){const c=`${stem}_${n}${suf}`; if(!existing.has(c)){existing.add(c); return c;} n++;} }
@@ -156,12 +181,12 @@ function renderLanguages(){ const box=$('languageBox'); box.innerHTML=''; DSL.ta
 function selectedLangs(){ return Array.from(document.querySelectorAll('.langCheck:checked')).map(x=>x.value); }
 function selectLangs(list){ document.querySelectorAll('.langCheck').forEach(c=>c.checked=list.includes(c.value)); }
 function renderModels(){ const filter=$('modelFilter').value.trim().toLowerCase(); const list=$('modelList'); list.innerHTML=''; const models=state.models.filter(m=>!filter||m.toLowerCase().includes(filter)); if(!models.length){ list.innerHTML='<div class="model-item"><span class="muted">没有匹配模型</span></div>'; return; } models.forEach(m=>{ const div=document.createElement('div'); div.className='model-item'; div.innerHTML=`<span>${escapeHtml(m)}</span><button class="ghost" type="button">使用</button>`; div.addEventListener('click',()=>{$('modelId').value=m; log('modelLog','已选择模型：'+m);}); list.appendChild(div); }); }
-function saveSettings(){ const data={providerName:$('providerName').value,baseUrl:$('baseUrl').value,modelId:$('modelId').value,temperature:$('temperature').value,maxTokens:$('maxTokens').value,saveKey:$('saveKey').checked,apiKey:$('saveKey').checked?$('apiKey').value:''}; localStorage.setItem('difyDslTranslatorSettings',JSON.stringify(data)); log('modelLog','已保存配置到本机浏览器。'+($('saveKey').checked?' API Key 已保存。':' API Key 未保存。')); }
+function saveSettings(){ const data={providerName:$('providerName').value,baseUrl:$('baseUrl').value,modelId:$('modelId').value,temperature:$('temperature').value,maxTokens:$('maxTokens').value,saveKey:$('saveKey').checked,apiKey:$('saveKey').checked?cleanApiKey($('apiKey').value):''}; localStorage.setItem('difyDslTranslatorSettings',JSON.stringify(data)); log('modelLog','已保存配置到本机浏览器。'+($('saveKey').checked?' API Key 已保存。':' API Key 未保存。')); }
 function loadSettings(){ try{ const raw=localStorage.getItem('difyDslTranslatorSettings'); if(!raw)return; const d=JSON.parse(raw); ['providerName','baseUrl','modelId','temperature','maxTokens','apiKey'].forEach(k=>{ if(d[k]!==undefined && $(k)) $(k).value=d[k]; }); $('saveKey').checked=!!d.saveKey; }catch(e){} }
 function forgetSettings(){ localStorage.removeItem('difyDslTranslatorSettings'); log('modelLog','已清除本机保存的配置。'); }
 async function refreshModels(){ setLog('modelLog','正在刷新模型列表...'); try{ const res=await fetch(endpoint('/models'),{headers:apiHeaders()}); const text=await res.text(); if(!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0,500)}`); const json=JSON.parse(text); const arr=Array.isArray(json.data)?json.data: Array.isArray(json.models)?json.models:[]; const models=arr.map(x=>typeof x==='string'?x:x.id).filter(Boolean); if(!models.length) throw new Error('返回中没有识别到 data[].id。原始返回：'+text.slice(0,500)); state.models=Array.from(new Set(models)).sort(); renderModels(); log('modelLog',`刷新成功：${state.models.length} 个模型。`); }catch(e){ log('modelLog','刷新失败：'+(e.message||e)+'. 如果是 Failed to fetch，通常是 Provider CORS 限制。'); }
 }
-async function testConnection(){ setLog('modelLog','正在测试连通性...'); try{ const body={model:$('modelId').value.trim(),messages:[{role:'system',content:'Reply with OK only.'},{role:'user',content:'Connection test'}],max_tokens:8}; const res=await fetch(endpoint('/chat/completions'),{method:'POST',headers:apiHeaders(),body:JSON.stringify(body)}); const text=await res.text(); if(!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0,800)}`); const json=JSON.parse(text); const out=json.choices?.[0]?.message?.content || json.choices?.[0]?.text || ''; log('modelLog','连通测试成功，模型返回：'+out.trim()); }catch(e){ log('modelLog','连通测试失败：'+(e.message||e)+'. 请检查 Base URL、API Key、模型 ID；如出现 CORS/Failed to fetch，说明当前 Provider 不允许浏览器直连。'); }
+async function testConnection(){ setLog('modelLog','正在测试连通性...'); try{ const body={model:$('modelId').value.trim(),messages:[{role:'system',content:'Reply with OK only.'},{role:'user',content:'Connection test'}],max_tokens:8}; const res=await fetch(endpoint('/chat/completions'),{method:'POST',headers:apiHeaders(),body:JSON.stringify(body)}); const text=await res.text(); if(!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0,800)}`); const json=JSON.parse(text); const out=json.choices?.[0]?.message?.content || json.choices?.[0]?.text || ''; log('modelLog','连通测试成功，模型返回：'+out.trim()); }catch(e){ log('modelLog','连通测试失败：'+(e.message||e)+'. 请检查 Base URL、API Key、模型 ID。若提示 headers / ISO-8859-1，通常是 API Key 混入了中文空格、中文引号、换行或备注文字；若出现 CORS/Failed to fetch，说明当前 Provider 不允许浏览器直连。'); }
 }
 async function readFileText(file){ const buf=await file.arrayBuffer(); for(const enc of ['utf-8','gb18030']){ try{return {text:new TextDecoder(enc,{fatal:true}).decode(buf),encoding:enc};}catch(e){} } return {text:new TextDecoder('utf-8').decode(buf),encoding:'utf-8-fallback'}; }
 function parseCSV(text){ if(text.charCodeAt(0)===0xfeff) text=text.slice(1); const rows=[]; let row=[],cell='',i=0,q=false; while(i<text.length){ const ch=text[i],nx=text[i+1]; if(q){ if(ch==='"'){ if(nx==='"'){cell+='"';i+=2;continue;} q=false;i++;continue;} cell+=ch;i++;continue;} if(ch==='"'){q=true;i++;continue;} if(ch===','){row.push(cell);cell='';i++;continue;} if(ch==='\n'){row.push(cell);rows.push(row);row=[];cell='';i++;continue;} if(ch==='\r'){ if(nx==='\n'){row.push(cell);rows.push(row);row=[];cell='';i+=2;continue;} row.push(cell);rows.push(row);row=[];cell='';i++;continue;} cell+=ch;i++; } if(cell!==''||row.length){row.push(cell);rows.push(row);} return rows; }
