@@ -172,6 +172,80 @@ function apiHeaders(){
   assertHeaderSafe('Authorization header', authorization);
   return {'Content-Type':'application/json','Authorization':authorization};
 }
+
+function getTokenLimitValue(){
+  const max = $('maxTokens').value.trim();
+  if (max === '') return null;
+  const n = Number(max);
+  if (!Number.isFinite(n) || n <= 0) throw new Error('Max Tokens 必须是正数，或留空不传。');
+  return Math.floor(n);
+}
+function addOptionalGenerationParams(body){
+  const temp = $('temperature').value.trim();
+  if (temp !== '') {
+    const t = Number(temp);
+    if (!Number.isFinite(t)) throw new Error('Temperature 必须是数字，或留空不传。');
+    body.temperature = t;
+  }
+  const max = getTokenLimitValue();
+  if (max !== null) body.max_tokens = max;
+  return body;
+}
+function unsupportedParam(raw, param){
+  const s = String(raw || '').toLowerCase();
+  return s.includes('unsupported parameter') && s.includes(param.toLowerCase());
+}
+async function postChatCompletion(body, logId){
+  let current = JSON.parse(JSON.stringify(body));
+  let switchedMaxTokens = false;
+  let switchedMaxCompletionTokens = false;
+  let removedTemperature = false;
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const res = await fetch(endpoint('/chat/completions'), {
+      method: 'POST',
+      headers: apiHeaders(),
+      body: JSON.stringify(current)
+    });
+    const raw = await res.text();
+
+    if (res.ok) {
+      try {
+        return JSON.parse(raw);
+      } catch (e) {
+        throw new Error('接口返回不是合法 JSON：' + raw.slice(0, 800));
+      }
+    }
+
+    if (unsupportedParam(raw, 'max_tokens') && current.max_tokens !== undefined && !switchedMaxTokens) {
+      current.max_completion_tokens = current.max_tokens;
+      delete current.max_tokens;
+      switchedMaxTokens = true;
+      if (logId) log(logId, '检测到当前模型不支持 max_tokens，已自动改用 max_completion_tokens 并重试。');
+      continue;
+    }
+
+    if (unsupportedParam(raw, 'max_completion_tokens') && current.max_completion_tokens !== undefined && !switchedMaxCompletionTokens) {
+      current.max_tokens = current.max_completion_tokens;
+      delete current.max_completion_tokens;
+      switchedMaxCompletionTokens = true;
+      if (logId) log(logId, '检测到当前模型不支持 max_completion_tokens，已自动改用 max_tokens 并重试。');
+      continue;
+    }
+
+    if (unsupportedParam(raw, 'temperature') && current.temperature !== undefined && !removedTemperature) {
+      delete current.temperature;
+      removedTemperature = true;
+      if (logId) log(logId, '检测到当前模型不支持 temperature，已自动移除 temperature 并重试。');
+      continue;
+    }
+
+    throw new Error(`HTTP ${res.status}: ${raw.slice(0,1000)}`);
+  }
+
+  throw new Error('接口参数兼容重试次数已用完。');
+}
+
 function escapeHtml(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fileStem(name){ return name.replace(/\.csv$/i,''); }
 function uniqueName(existing,name){ if(!existing.has(name)){existing.add(name);return name;} const i=name.lastIndexOf('.'), stem=i>=0?name.slice(0,i):name, suf=i>=0?name.slice(i):''; let n=1; while(true){const c=`${stem}_${n}${suf}`; if(!existing.has(c)){existing.add(c); return c;} n++;} }
@@ -186,7 +260,22 @@ function loadSettings(){ try{ const raw=localStorage.getItem('difyDslTranslatorS
 function forgetSettings(){ localStorage.removeItem('difyDslTranslatorSettings'); log('modelLog','已清除本机保存的配置。'); }
 async function refreshModels(){ setLog('modelLog','正在刷新模型列表...'); try{ const res=await fetch(endpoint('/models'),{headers:apiHeaders()}); const text=await res.text(); if(!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0,500)}`); const json=JSON.parse(text); const arr=Array.isArray(json.data)?json.data: Array.isArray(json.models)?json.models:[]; const models=arr.map(x=>typeof x==='string'?x:x.id).filter(Boolean); if(!models.length) throw new Error('返回中没有识别到 data[].id。原始返回：'+text.slice(0,500)); state.models=Array.from(new Set(models)).sort(); renderModels(); log('modelLog',`刷新成功：${state.models.length} 个模型。`); }catch(e){ log('modelLog','刷新失败：'+(e.message||e)+'. 如果是 Failed to fetch，通常是 Provider CORS 限制。'); }
 }
-async function testConnection(){ setLog('modelLog','正在测试连通性...'); try{ const body={model:$('modelId').value.trim(),messages:[{role:'system',content:'Reply with OK only.'},{role:'user',content:'Connection test'}],max_tokens:8}; const res=await fetch(endpoint('/chat/completions'),{method:'POST',headers:apiHeaders(),body:JSON.stringify(body)}); const text=await res.text(); if(!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0,800)}`); const json=JSON.parse(text); const out=json.choices?.[0]?.message?.content || json.choices?.[0]?.text || ''; log('modelLog','连通测试成功，模型返回：'+out.trim()); }catch(e){ log('modelLog','连通测试失败：'+(e.message||e)+'. 请检查 Base URL、API Key、模型 ID。若提示 headers / ISO-8859-1，通常是 API Key 混入了中文空格、中文引号、换行或备注文字；若出现 CORS/Failed to fetch，说明当前 Provider 不允许浏览器直连。'); }
+async function testConnection(){
+  setLog('modelLog','正在测试连通性...');
+  try{
+    const body = addOptionalGenerationParams({
+      model: $('modelId').value.trim(),
+      messages: [
+        {role:'system', content:'Reply with OK only.'},
+        {role:'user', content:'Connection test'}
+      ]
+    });
+    const json = await postChatCompletion(body, 'modelLog');
+    const out = json.choices?.[0]?.message?.content || json.choices?.[0]?.text || '';
+    log('modelLog','连通测试成功，模型返回：'+out.trim());
+  }catch(e){
+    log('modelLog','连通测试失败：'+(e.message||e)+'. 请检查 Base URL、API Key、模型 ID。若提示 headers / ISO-8859-1，通常是 API Key 混入了中文空格、中文引号、换行或备注文字；若出现 CORS/Failed to fetch，说明当前 Provider 不允许浏览器直连。');
+  }
 }
 async function readFileText(file){ const buf=await file.arrayBuffer(); for(const enc of ['utf-8','gb18030']){ try{return {text:new TextDecoder(enc,{fatal:true}).decode(buf),encoding:enc};}catch(e){} } return {text:new TextDecoder('utf-8').decode(buf),encoding:'utf-8-fallback'}; }
 function parseCSV(text){ if(text.charCodeAt(0)===0xfeff) text=text.slice(1); const rows=[]; let row=[],cell='',i=0,q=false; while(i<text.length){ const ch=text[i],nx=text[i+1]; if(q){ if(ch==='"'){ if(nx==='"'){cell+='"';i+=2;continue;} q=false;i++;continue;} cell+=ch;i++;continue;} if(ch==='"'){q=true;i++;continue;} if(ch===','){row.push(cell);cell='';i++;continue;} if(ch==='\n'){row.push(cell);rows.push(row);row=[];cell='';i++;continue;} if(ch==='\r'){ if(nx==='\n'){row.push(cell);rows.push(row);row=[];cell='';i+=2;continue;} row.push(cell);rows.push(row);row=[];cell='';i++;continue;} cell+=ch;i++; } if(cell!==''||row.length){row.push(cell);rows.push(row);} return rows; }
@@ -202,7 +291,14 @@ function promptTranslation(sourceLang,targetLang,sourceText){ return [{role:'sys
 function promptSuggestions(sourceLang,targetLang,sourceText,translation,country){ const countryLine=country?`The final style and tone of the translation should match the style of ${targetLang} colloquially spoken in ${country}.\n`:''; return [{role:'system',content:`Your task is to carefully read a source text and a translation from ${sourceLang} to ${targetLang}, and then give constructive criticism and helpful suggestions to improve the translation.\n${countryLine}\nThe source text and initial translation, delimited by XML tags <SOURCE_TEXT></SOURCE_TEXT> and <TRANSLATION></TRANSLATION>, are as follows:\n<SOURCE_TEXT>\n${sourceText}\n</SOURCE_TEXT>\n<TRANSLATION>\n${translation}\n</TRANSLATION>\nWhen writing suggestions, pay attention to whether there are ways to improve the translation's\n(i) accuracy (by correcting errors of addition, mistranslation, omission, or untranslated text),\n(ii) fluency (by applying ${targetLang} grammar, spelling and punctuation rules, and ensuring there are no unnecessary repetitions),\n(iii) style (by ensuring the translations reflect the style of the source text and take into account any cultural context),\n(iv) terminology (by ensuring terminology use is consistent and reflects the source text domain; and by only ensuring you use equivalent idioms in ${targetLang}).\nWrite a list of specific, helpful and constructive suggestions for improving the translation.\nEach suggestion should address one specific part of the translation.\nOutput only the suggestions and nothing else.`}]; }
 function promptImprove(sourceLang,targetLang,sourceText,translation,suggestions){ return [{role:'system',content:`You are an expert linguist, specializing in translation editing from ${sourceLang} to ${targetLang}.`},{role:'user',content:`Your task is to carefully read, then edit, a translation from ${sourceLang} to ${targetLang}, taking into account a list of expert suggestions and constructive criticisms.\nThe source text, the initial translation, and the expert linguist suggestions are delimited by XML tags <SOURCE_TEXT></SOURCE_TEXT>, <TRANSLATION></TRANSLATION> and <EXPERT_SUGGESTIONS></EXPERT_SUGGESTIONS> as follows:\n<SOURCE_TEXT>\n${sourceText}\n</SOURCE_TEXT>\n<TRANSLATION>\n${translation}\n</TRANSLATION>\n<EXPERT_SUGGESTIONS>\n${suggestions}\n</EXPERT_SUGGESTIONS>\nPlease take into account the expert suggestions when editing the translation. Edit the translation by ensuring:\n(i) accuracy (by correcting errors of addition, mistranslation, omission, or untranslated text),\n(ii) fluency (by applying ${targetLang} grammar, spelling and punctuation rules and ensuring there are no unnecessary repetitions),\n(iii) style (by ensuring the translations reflect the style of the source text),\n(iv) terminology (inappropriate for context, inconsistent use), or\n(v) other errors.\nOutput only the new translation and nothing else.`}]; }
 function stripOutputObject(text){ const t=String(text??'').trim(); try{ const obj=JSON.parse(t); if(obj && typeof obj==='object' && Object.prototype.hasOwnProperty.call(obj,'output')) return String(obj.output??''); }catch(e){} return String(text??'').trim(); }
-async function chat(messages){ const body={model:$('modelId').value.trim(),messages}; const temp=$('temperature').value.trim(), max=$('maxTokens').value.trim(); if(temp!=='') body.temperature=Number(temp); if(max!=='') body.max_tokens=Number(max); const res=await fetch(endpoint('/chat/completions'),{method:'POST',headers:apiHeaders(),body:JSON.stringify(body)}); const text=await res.text(); if(!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0,1000)}`); const json=JSON.parse(text); return stripOutputObject(json.choices?.[0]?.message?.content ?? json.choices?.[0]?.text ?? ''); }
+async function chat(messages){
+  const body = addOptionalGenerationParams({
+    model: $('modelId').value.trim(),
+    messages
+  });
+  const json = await postChatCompletion(body, 'translateLog');
+  return stripOutputObject(json.choices?.[0]?.message?.content ?? json.choices?.[0]?.text ?? '');
+}; const temp=$('temperature').value.trim(), max=$('maxTokens').value.trim(); if(temp!=='') body.temperature=Number(temp); if(max!=='') body.max_tokens=Number(max); const res=await fetch(endpoint('/chat/completions'),{method:'POST',headers:apiHeaders(),body:JSON.stringify(body)}); const text=await res.text(); if(!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0,1000)}`); const json=JSON.parse(text); return stripOutputObject(json.choices?.[0]?.message?.content ?? json.choices?.[0]?.text ?? ''); }
 async function withRetry(fn,retries){ let last; for(let i=0;i<=retries;i++){ try{return await fn();}catch(e){ last=e; if(i<retries) await sleep(800*(i+1)); } } throw last; }
 async function workflowTranslate(sourceText,sourceLang,targetLang,country){ if($('workflowMode').value==='fast') return await chat(promptImprove(sourceLang,targetLang,sourceText,'','Translate the source text directly and produce a polished final translation.')); const initial=await chat(promptTranslation(sourceLang,targetLang,sourceText)); const sugg=await chat(promptSuggestions(sourceLang,targetLang,sourceText,initial,country)); const finalText=await chat(promptImprove(sourceLang,targetLang,sourceText,initial,sugg)); return finalText; }
 function buildTasksForRows(rows,headers,meta){ const srcIdx=findCol(headers,meta.sourceCol), countryIdx=meta.countryCol?findCol(headers,meta.countryCol):-1; const tasks=[]; for(let r=1;r<rows.length;r++){ const source=(rows[r][srcIdx]??'').trim(); if(!source) continue; for(const lang of meta.langs){ const country=countryIdx>=0 ? (rows[r][countryIdx]||meta.countryGlobal||'') : meta.countryGlobal; tasks.push({rowIndex:r,lang,source,country}); } } return tasks; }
