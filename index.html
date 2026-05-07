@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Dify DSL 批量翻译清洗一体化工具</title>
+  <title>Digital Power多语言批量翻译工具</title>
   <style>
     :root{
       --bg:#f5f7fb;--card:#fff;--ink:#111827;--muted:#64748b;--line:#e5e7eb;
@@ -21,8 +21,8 @@
 <main class="wrap">
   <section class="hero">
     <div class="card intro">
-      <h1>Dify DSL 批量翻译清洗一体化工具</h1>
-      <p class="muted">已内置你上传的 <strong>Multilingual Translation Master</strong> 工作流逻辑：初译 → 专家建议 → 改译。批量翻译完成后直接输出已清洗的纯文本 CSV，不再需要二次清洗；也保留旧 Dify result.csv 的 <code>{"output":"..."}</code> 兼容清洗。</p>
+      <h1>Digital Power多语言批量翻译工具</h1>
+      <p class="muted">内置 <strong>Multilingual Translation Master</strong> 工作流逻辑：初译 → 专家建议 → 改译。批量翻译完成后直接输出已清洗的纯文本 CSV <code>{"output":"..."}</code> 兼容清洗。</p>
       <div style="margin-top:12px"><span class="pill">单 HTML 文件</span><span class="pill">无安装包依赖</span><span class="pill">本地处理 CSV</span><span class="pill">AIHubMix / OpenAI 兼容</span><span class="pill">批处理</span></div>
     </div>
     <div class="card stats">
@@ -50,8 +50,8 @@
       </div>
       <div class="grid3">
         <div class="field"><label>当前模型 ID</label><input id="modelId" value="gpt-5.4" placeholder="例如 gpt-4o-mini" /></div>
-        <div class="field"><label>Temperature（留空则不传）</label><input id="temperature" value="0.2" /></div>
-        <div class="field"><label>Max Tokens（自动兼容 max_tokens / max_completion_tokens，留空则不传）</label><input id="maxTokens" value="4096" /></div>
+        <div class="field"><label>Temperature（留空则不传）</label><input id="temperature" value="" /></div>
+        <div class="field"><label>Max Tokens（自动兼容 max_tokens / max_completion_tokens，留空则不传）</label><input id="maxTokens" value="" /></div>
       </div>
       <div class="button-row">
         <button class="primary" id="testBtn">连通测试</button>
