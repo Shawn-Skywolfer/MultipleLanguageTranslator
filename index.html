@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Digital Power 多语言批量翻译工具</title>
+  <title>Digital Power 批量翻译工具</title>
   <style>
     :root{
       --bg:#f5f7fb;--card:#fff;--ink:#111827;--muted:#64748b;--line:#e5e7eb;
@@ -12,8 +12,8 @@
       --shadow:0 16px 38px rgba(15,23,42,.08);--r:18px;
     }
     *{box-sizing:border-box} body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Arial,sans-serif;color:var(--ink);background:radial-gradient(circle at 15% 0%,rgba(37,99,235,.15),transparent 35%),linear-gradient(180deg,#fff 0%,var(--bg) 44%,#eef2ff 100%);min-height:100vh}
-    .wrap{max-width:1240px;margin:0 auto;padding:34px 20px 60px;overflow-x:hidden}.hero{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,.55fr);gap:18px;margin-bottom:18px}.card{background:rgba(255,255,255,.92);border:1px solid rgba(229,231,235,.9);border-radius:var(--r);box-shadow:var(--shadow);backdrop-filter:blur(10px);min-width:0;max-width:100%}
-    .intro{padding:28px}.stats{padding:18px;display:grid;gap:12px}.stat{border:1px solid var(--line);border-radius:14px;padding:14px;background:#f8fafc}.stat strong{display:block;font-size:28px;line-height:1.1}.muted{color:var(--muted)} h1{font-size:clamp(28px,4vw,44px);line-height:1.08;letter-spacing:-.035em;margin:0 0 12px} h2{font-size:20px;margin:0 0 12px} h3{font-size:16px;margin:18px 0 9px} p{line-height:1.7;margin:0}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0}.tab{border:1px solid var(--line);background:#fff;color:#334155;border-radius:999px;padding:11px 16px;font-weight:800;cursor:pointer}.tab.active{background:var(--brand);color:#fff;border-color:var(--brand)}.section{display:none}.section.active{display:block}.panel{padding:22px;min-width:0}.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;min-width:0}.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;min-width:0}.grid>*,.grid3>*,.hero>*{min-width:0}.field{display:grid;gap:7px;margin:12px 0;min-width:0} label{font-size:13px;font-weight:800;color:#334155} input,select,textarea{width:100%;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);outline:none;font-size:14px} input,select{height:42px;padding:0 12px} textarea{min-height:86px;padding:12px;resize:vertical;font-family:inherit} input:focus,select:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0 0 4px rgba(37,99,235,.11)}.button-row{display:flex;flex-wrap:wrap;gap:9px;margin-top:12px}button,.file-label,.download-link{border:0;border-radius:999px;padding:10px 15px;font-weight:800;font-size:14px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:7px;justify-content:center;transition:.12s ease}button:hover,.file-label:hover,.download-link:hover{transform:translateY(-1px);box-shadow:0 8px 18px rgba(15,23,42,.12)}button:disabled{opacity:.48;cursor:not-allowed;transform:none;box-shadow:none}.primary{background:var(--brand);color:#fff}.primary:hover{background:var(--brand2)}.secondary{background:#eef2ff;color:#1e40af}.ghost{background:#f1f5f9;color:#334155}.danger{background:#fee2e2;color:#991b1b}.success{background:#dcfce7;color:#166534}.warnbtn{background:#fef3c7;color:#92400e} input[type=file]{display:none}.notice{border-radius:14px;padding:12px 14px;border:1px solid var(--line);font-size:14px;line-height:1.65;margin-top:12px}.blue{background:var(--blue);color:#1e3a8a;border-color:#bfdbfe}.green{background:var(--green);color:#065f46;border-color:#a7f3d0}.yellow{background:var(--yellow);color:#92400e;border-color:#fde68a}.red{background:var(--red);color:#991b1b;border-color:#fecaca}.dropzone{border:1.5px dashed #b7c2d6;border-radius:16px;padding:20px;text-align:center;background:#fbfdff;color:var(--muted);margin-top:12px}.dropzone.dragover{background:var(--blue);border-color:var(--brand);color:#1d4ed8}.language-box{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:14px;padding:12px;background:#fff}.check{display:flex;align-items:center;gap:7px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:8px 9px;font-size:13px}.check input{width:auto;height:auto}.mini{font-size:12px;color:var(--muted)}.hidden{display:none!important}table{width:100%;border-collapse:collapse;font-size:13px;margin-top:12px}th,td{text-align:left;vertical-align:top;padding:10px 11px;border-bottom:1px solid var(--line)}th{background:#f8fafc;color:#334155;font-size:12px}.status{display:inline-flex;border-radius:999px;padding:4px 8px;font-weight:800;font-size:12px;white-space:nowrap}.ok{background:#dcfce7;color:#166534}.skip{background:#fef3c7;color:#92400e}.fail{background:#fee2e2;color:#991b1b}.run{background:#dbeafe;color:#1d4ed8}.log{background:#0b1220;color:#d1d5db;border-radius:14px;padding:13px;min-height:78px;max-height:260px;overflow:auto;overflow-x:auto;max-width:100%;width:100%;min-width:0;font-family:Consolas,Monaco,"Courier New",monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;margin-top:12px}.pill{display:inline-flex;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px;font-weight:800;padding:4px 9px;margin:4px 6px 0 0}.progress{height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:12px}.bar{height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#06b6d4);transition:width .2s}.model-list{max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:14px;background:#fff;margin-top:8px}.model-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid #f1f5f9;cursor:pointer}.model-item:hover{background:#f8fafc}.model-item:last-child{border-bottom:0}.code{font-family:Consolas,Monaco,"Courier New",monospace;background:#f8fafc;border:1px solid var(--line);border-radius:12px;padding:12px;white-space:pre-wrap;font-size:12px;color:#334155;max-height:230px;overflow:auto}.footer-actions{position:sticky;bottom:12px;z-index:5;background:rgba(255,255,255,.9);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:16px;padding:12px;box-shadow:0 10px 28px rgba(15,23,42,.1)}
+    .wrap{max-width:1240px;margin:0 auto;padding:34px 20px 60px}.hero{display:grid;grid-template-columns:1.45fr .55fr;gap:18px;margin-bottom:18px}.card{background:rgba(255,255,255,.92);border:1px solid rgba(229,231,235,.9);border-radius:var(--r);box-shadow:var(--shadow);backdrop-filter:blur(10px)}
+    .intro{padding:28px}.stats{padding:18px;display:grid;gap:12px}.stat{border:1px solid var(--line);border-radius:14px;padding:14px;background:#f8fafc}.stat strong{display:block;font-size:28px;line-height:1.1}.muted{color:var(--muted)} h1{font-size:clamp(28px,4vw,44px);line-height:1.08;letter-spacing:-.035em;margin:0 0 12px} h2{font-size:20px;margin:0 0 12px} h3{font-size:16px;margin:18px 0 9px} p{line-height:1.7;margin:0}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0}.tab{border:1px solid var(--line);background:#fff;color:#334155;border-radius:999px;padding:11px 16px;font-weight:800;cursor:pointer}.tab.active{background:var(--brand);color:#fff;border-color:var(--brand)}.section{display:none}.section.active{display:block}.panel{padding:22px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}.field{display:grid;gap:7px;margin:12px 0} label{font-size:13px;font-weight:800;color:#334155} input,select,textarea{width:100%;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);outline:none;font-size:14px} input,select{height:42px;padding:0 12px} textarea{min-height:86px;padding:12px;resize:vertical;font-family:inherit} input:focus,select:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0 0 4px rgba(37,99,235,.11)}.button-row{display:flex;flex-wrap:wrap;gap:9px;margin-top:12px}button,.file-label,.download-link{border:0;border-radius:999px;padding:10px 15px;font-weight:800;font-size:14px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:7px;justify-content:center;transition:.12s ease}button:hover,.file-label:hover,.download-link:hover{transform:translateY(-1px);box-shadow:0 8px 18px rgba(15,23,42,.12)}button:disabled{opacity:.48;cursor:not-allowed;transform:none;box-shadow:none}.primary{background:var(--brand);color:#fff}.primary:hover{background:var(--brand2)}.secondary{background:#eef2ff;color:#1e40af}.ghost{background:#f1f5f9;color:#334155}.danger{background:#fee2e2;color:#991b1b}.success{background:#dcfce7;color:#166534}.warnbtn{background:#fef3c7;color:#92400e} input[type=file]{display:none}.notice{border-radius:14px;padding:12px 14px;border:1px solid var(--line);font-size:14px;line-height:1.65;margin-top:12px}.blue{background:var(--blue);color:#1e3a8a;border-color:#bfdbfe}.green{background:var(--green);color:#065f46;border-color:#a7f3d0}.yellow{background:var(--yellow);color:#92400e;border-color:#fde68a}.red{background:var(--red);color:#991b1b;border-color:#fecaca}.dropzone{border:1.5px dashed #b7c2d6;border-radius:16px;padding:20px;text-align:center;background:#fbfdff;color:var(--muted);margin-top:12px}.dropzone.dragover{background:var(--blue);border-color:var(--brand);color:#1d4ed8}.language-box{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:14px;padding:12px;background:#fff}.check{display:flex;align-items:center;gap:7px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:8px 9px;font-size:13px}.check input{width:auto;height:auto}.mini{font-size:12px;color:var(--muted)}.hidden{display:none!important}table{width:100%;border-collapse:collapse;font-size:13px;margin-top:12px}th,td{text-align:left;vertical-align:top;padding:10px 11px;border-bottom:1px solid var(--line)}th{background:#f8fafc;color:#334155;font-size:12px}.status{display:inline-flex;border-radius:999px;padding:4px 8px;font-weight:800;font-size:12px;white-space:nowrap}.ok{background:#dcfce7;color:#166534}.skip{background:#fef3c7;color:#92400e}.fail{background:#fee2e2;color:#991b1b}.run{background:#dbeafe;color:#1d4ed8}.log{background:#0b1220;color:#d1d5db;border-radius:14px;padding:13px;min-height:78px;max-height:260px;overflow:auto;font-family:Consolas,Monaco,"Courier New",monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;margin-top:12px}.pill{display:inline-flex;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px;font-weight:800;padding:4px 9px;margin:4px 6px 0 0}.progress{height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:12px}.bar{height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#06b6d4);transition:width .2s}.model-list{max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:14px;background:#fff;margin-top:8px}.model-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid #f1f5f9;cursor:pointer}.model-item:hover{background:#f8fafc}.model-item:last-child{border-bottom:0}.code{font-family:Consolas,Monaco,"Courier New",monospace;background:#f8fafc;border:1px solid var(--line);border-radius:12px;padding:12px;white-space:pre-wrap;font-size:12px;color:#334155;max-height:230px;overflow:auto}.footer-actions{position:sticky;bottom:12px;z-index:5;background:rgba(255,255,255,.9);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:16px;padding:12px;box-shadow:0 10px 28px rgba(15,23,42,.1)}
     @media(max-width:900px){.hero,.grid,.grid3{grid-template-columns:1fr}.wrap{padding-top:22px}}
   </style>
 </head>
@@ -21,12 +21,12 @@
 <main class="wrap">
   <section class="hero">
     <div class="card intro">
-      <h1>Digital Power 多语言批量翻译工具</h1>
-      <p class="muted">内置 <strong>Multilingual Translation Master</strong> 工作流逻辑：基于吴恩达开发的“初译 → 专家建议 → 改译”流程，支持批量翻译完成后直接输出已清洗的纯文本多语言.CSV文件。</p>
+      <h1>Digital Power 批量翻译工具</h1>
+      <p class="muted">内置 Multilingual Translation Master 工作流逻辑：基于吴恩达开发的“初译 → 专家建议 → 改译”流程，支持批量翻译完成后直接输出已清洗的纯文本多语言.CSV文件。</p>
       <div style="margin-top:12px"><span class="pill">单 HTML 文件</span><span class="pill">无安装包依赖</span><span class="pill">本地处理 CSV</span><span class="pill">AIHubMix / OpenAI 兼容</span><span class="pill">批处理</span></div>
     </div>
     <div class="card stats">
-      <div class="stat"><strong id="statFiles">0</strong><span class="muted">已载入 CSV</span></div>
+      <div class="stat"><strong id="statFiles">0</strong><span class="muted">已上传 CSV</span></div>
       <div class="stat"><strong id="statDone">0</strong><span class="muted">已完成任务</span></div>
       <div class="stat"><strong id="statErrors">0</strong><span class="muted">跳过/失败</span></div>
     </div>
@@ -35,8 +35,6 @@
   <nav class="tabs">
     <button class="tab active" data-tab="model">1. 模型配置</button>
     <button class="tab" data-tab="translate">2. 批量翻译</button>
-    <button class="tab" data-tab="clean">3. 旧 CSV 清洗（可选）</button>
-    <button class="tab" data-tab="dsl">内置 DSL 说明</button>
   </nav>
 
   <section id="tab-model" class="section active">
@@ -50,8 +48,8 @@
       </div>
       <div class="grid3">
         <div class="field"><label>当前模型 ID</label><input id="modelId" value="gpt-5.4" placeholder="例如 gpt-4o-mini" /></div>
-        <div class="field"><label>Temperature（留空则不传）</label><input id="temperature" value="" /></div>
-        <div class="field"><label>Max Tokens（自动兼容 max_tokens / max_completion_tokens，留空则不传）</label><input id="maxTokens" value="" /></div>
+        <div class="field"><label>Temperature（留空则不传）</label><input id="temperature" /></div>
+        <div class="field"><label>Max Tokens（自动兼容 max_tokens / max_completion_tokens，留空则不传）</label><input id="maxTokens" /></div>
       </div>
       <div class="button-row">
         <button class="primary" id="testBtn">连通测试</button>
@@ -60,7 +58,7 @@
         <button class="danger" id="forgetSettingsBtn">清除本机保存</button>
       </div>
       <div class="field"><label><input type="checkbox" id="saveKey" style="width:auto;height:auto" /> 保存 API Key 到本机浏览器 localStorage</label></div>
-      <div class="notice yellow">如果连通测试显示 <strong>Failed to fetch / CORS</strong>，说明该 Provider 不允许浏览器网页直接调用。静态单 HTML 无法绕过这个浏览器安全限制，需要 Provider 开启 CORS，或使用你自己的轻量代理服务。工具会自动兼容 <code>max_tokens</code> 与 <code>max_completion_tokens</code>，也会在模型不支持 <code>temperature</code> 时自动移除重试。</div>
+      <div class="notice yellow">如果连通测试显示 <strong>Failed to fetch / CORS</strong>，说明该 Provider 不允许浏览器网页直接调用。静态单 HTML 无法绕过这个浏览器安全限制，需要 Provider 开启 CORS，或使用你自己的轻量代理服务。</div>
       <div class="grid">
         <div>
           <div class="field"><label>模型关键字筛选</label><input id="modelFilter" placeholder="输入 gpt / claude / gemini / deepseek / qwen 等" /></div>
@@ -77,21 +75,20 @@
   <section id="tab-translate" class="section">
     <div class="grid">
       <div class="card panel">
-        <h2>选择 CSV</h2>
-        <p class="muted">批量翻译输出会自动清洗为纯文本 CSV。文件夹模式可自动创建 <strong>Cleaned</strong> 和 <strong>Processed</strong> 文件夹；兼容模式只能下载输出文件，不能移动你的原始本地文件。</p>
+        <h2>上传 CSV</h2>
+        <p class="muted">上传一个或多个 CSV 文件，工具会批量翻译并直接输出已清洗的纯文本多语言 CSV。</p>
         <div class="button-row">
-          <button class="primary" id="pickFolderTranslateBtn">选择文件夹</button>
-          <label class="file-label secondary" for="translateFiles">选择多个 CSV</label>
+          <label class="file-label secondary" for="translateFiles">上传CSV文件</label>
           <button class="ghost" id="clearTranslateBtn">清空</button>
         </div>
         <input id="translateFiles" type="file" accept=".csv,text/csv" multiple />
-        <div class="dropzone" id="translateDrop">也可以把多个 CSV 拖到这里</div>
-        <div class="notice blue" id="translateFileInfo">尚未选择文件。</div>
+        <div class="dropzone" id="translateDrop">也可以把 CSV 文件拖到这里</div>
+        <div class="notice blue" id="translateFileInfo">尚未上传文件。</div>
       </div>
       <div class="card panel">
         <h2>输入列与输出方式</h2>
         <div class="grid">
-          <div class="field"><label>原文列</label><select id="sourceColumn"><option value="">先选择 CSV</option></select></div>
+          <div class="field"><label>原文列</label><select id="sourceColumn"><option value="">先上传 CSV</option></select></div>
           <div class="field"><label>源语言</label><select id="sourceLang"><option>English</option><option>Chinese</option><option>Auto</option></select></div>
         </div>
         <div class="grid">
@@ -102,7 +99,6 @@
           <div class="field"><label>工作流模式</label><select id="workflowMode"><option value="full">完整 DSL：初译 + 建议 + 改译（3 次模型调用/语言/行）</option><option value="fast">快速模式：直接最终翻译（1 次模型调用/语言/行）</option></select></div>
           <div class="field"><label>输出格式</label><select id="outputMode"><option value="wide">宽表：每个目标语言新增一列</option><option value="long">长表：每个目标语言生成一行</option></select></div>
         </div>
-        <div class="notice green">批量翻译结果会在导出前自动清洗：如果模型偶发返回 <code>{"output":"..."}</code>、<code>{"translation":"..."}</code>、<code>{"result":"..."}</code> 或 JSON 代码块，都会自动提取为纯文本后写入 CSV。</div>
         <div class="grid">
           <div class="field"><label>并发数</label><select id="concurrency"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select></div>
           <div class="field"><label>失败重试次数</label><select id="retries"><option>0</option><option selected>1</option><option>2</option><option>3</option></select></div>
@@ -119,7 +115,6 @@
       <div class="button-row">
         <button class="primary" id="runTranslateBtn">开始批量翻译</button>
         <button class="danger" id="cancelTranslateBtn" disabled>停止</button>
-        <button class="secondary" id="downloadTranslateBtn" disabled>下载全部清洗后结果</button>
       </div>
       <div class="progress"><div class="bar" id="translateBar"></div></div>
       <div class="mini" id="translateProgressText">尚未开始。</div>
@@ -131,45 +126,6 @@
       <div class="log" id="translateLog">准备就绪。</div>
     </div>
   </section>
-
-  <section id="tab-clean" class="section">
-    <div class="grid">
-      <div class="card panel">
-        <h2>旧 Dify result.csv 批量清洗（可选）</h2>
-        <p class="muted">批量翻译已经自动输出 clean CSV；这里仅用于处理过去从 Dify Web App 下载的 result.csv，把指定列里的 <code>{"output":"翻译文本"}</code> 提取成纯文本。可继续使用文件夹模式自动生成 Cleaned / Processed。</p>
-        <div class="grid">
-          <div class="field"><label>清洗列名</label><input id="cleanColumn" value="生成结果" /></div>
-          <div class="field"><label>JSON 字段名</label><input id="cleanKey" value="output" /></div>
-        </div>
-        <div class="button-row"><button class="primary" id="pickFolderCleanBtn">选择文件夹并清洗</button><label class="file-label secondary" for="cleanFiles">选择多个 CSV 清洗</label><button class="secondary" id="downloadCleanBtn" disabled>下载全部 clean 文件</button><button class="ghost" id="clearCleanBtn">清空</button></div>
-        <input id="cleanFiles" type="file" accept=".csv,text/csv" multiple />
-        <div class="dropzone" id="cleanDrop">也可以把多个 CSV 拖到这里</div>
-        <div class="notice blue">清洗工具不调用大模型，完全本地处理。</div>
-      </div>
-      <div class="card panel">
-        <h2>清洗结果</h2>
-        <div id="cleanTableWrap" class="hidden"><table><thead><tr><th>文件</th><th>状态</th><th>清洗数量</th><th>说明</th><th>下载</th></tr></thead><tbody id="cleanResultBody"></tbody></table></div>
-        <div class="notice yellow" id="cleanEmpty">还没有清洗结果。</div>
-        <div class="log" id="cleanLog">准备就绪。</div>
-      </div>
-    </div>
-  </section>
-
-  <section id="tab-dsl" class="section">
-    <div class="grid">
-      <div class="card panel">
-        <h2>内置 DSL 工作流结构</h2>
-        <p class="muted">本工具按你上传的 Dify DSL 重建前端工作流，并修正了两个明显变量问题：初译 system prompt 中把 source_text 改为 source_lang；最终改译中把 <code>{target_lang}</code> 改为实际目标语言。</p>
-        <div class="code" id="dslSummary"></div>
-      </div>
-      <div class="card panel">
-        <h2>说明与限制</h2>
-        <div class="notice blue">文件夹模式依赖浏览器 File System Access API，建议使用最新版 Edge / Chrome。其他浏览器可以用多文件模式并手动下载结果。</div>
-        <div class="notice yellow">完整 DSL 模式每行每个目标语言会调用 3 次模型。比如 100 行 × 5 个语言 = 1500 次模型调用。大批量建议先用 2-3 行测试。</div>
-        <div class="notice red">API Key 会出现在浏览器发给 Provider 的请求头中。此单页工具没有后端，不会把 Key 发给除你配置的 Base URL 之外的地址。</div>
-      </div>
-    </div>
-  </section>
 </main>
 <script>
 const DSL = {
@@ -177,7 +133,7 @@ const DSL = {
   provider: 'langgenius/aihubmix/aihubmix',
   model: 'gpt-5.4',
   sourceLangOptions: ['English','Chinese'],
-  targetLangOptions: ['German','Spanish','French','Bulgarian','Czech','Greek','Italian','Dutch','Polish','Romanian','Turkish','Hungarian','Slovakian','Portuguese','Croatian','Danish','Ukrainian'],
+  targetLangOptions: ['German','Spanish','French','Bulgarian','Czech','Greek','Italian','Dutch','Polish','Romanian','Turkish','Hungarian','Slovakian','Portuguese','Croatian','Danish','Swedish','Ukrainian'],
   workflow: ['TRANSLATION','COUNTRY IS NULL','EXPERT_SUGGESTIONS / EXPERT_SUGGESTIONS_WITH_COUNTRY','SUGGESTIONS aggregator','IMPROVE_TRANSLATE','END output'],
   defaultOutputKey: 'output'
 };
@@ -205,56 +161,7 @@ function loadSettings(){ try{ const raw=localStorage.getItem('difyDslTranslatorS
 function forgetSettings(){ localStorage.removeItem('difyDslTranslatorSettings'); log('modelLog','已清除本机保存的配置。'); }
 async function refreshModels(){ setLog('modelLog','正在刷新模型列表...'); try{ const res=await fetch(endpoint('/models'),{headers:apiHeaders()}); const text=await res.text(); if(!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0,500)}`); const json=JSON.parse(text); const arr=Array.isArray(json.data)?json.data: Array.isArray(json.models)?json.models:[]; const models=arr.map(x=>typeof x==='string'?x:x.id).filter(Boolean); if(!models.length) throw new Error('返回中没有识别到 data[].id。原始返回：'+text.slice(0,500)); state.models=Array.from(new Set(models)).sort(); renderModels(); log('modelLog',`刷新成功：${state.models.length} 个模型。`); }catch(e){ log('modelLog','刷新失败：'+(e.message||e)+'. 如果是 Failed to fetch，通常是 Provider CORS 限制。'); }
 }
-async function callChatCompletions(rawBody){
-  let body={...rawBody};
-  const notes=[];
-  let lastError='';
-  for(let attempt=0; attempt<5; attempt++){
-    const res=await fetch(endpoint('/chat/completions'),{method:'POST',headers:apiHeaders(),body:JSON.stringify(body)});
-    const text=await res.text();
-    if(res.ok){
-      let json;
-      try{ json=JSON.parse(text); }catch(e){ throw new Error('接口返回不是有效 JSON：'+text.slice(0,500)); }
-      return {json,text,notes,body};
-    }
-    lastError=`HTTP ${res.status}: ${text.slice(0,1000)}`;
-    let err=null;
-    try{ err=JSON.parse(text); }catch(e){}
-    const msg=String(err?.error?.message || text || '').toLowerCase();
-    const param=String(err?.error?.param || '').toLowerCase();
-
-    if((param==='max_tokens' || (msg.includes('max_tokens') && msg.includes('max_completion_tokens'))) && body.max_tokens!==undefined){
-      body.max_completion_tokens=body.max_tokens;
-      delete body.max_tokens;
-      notes.push('检测到当前模型不支持 max_tokens，已自动改用 max_completion_tokens 并重试。');
-      continue;
-    }
-    if((param==='max_completion_tokens' || (msg.includes('max_completion_tokens') && msg.includes('max_tokens'))) && body.max_completion_tokens!==undefined){
-      body.max_tokens=body.max_completion_tokens;
-      delete body.max_completion_tokens;
-      notes.push('检测到当前模型不支持 max_completion_tokens，已自动改用 max_tokens 并重试。');
-      continue;
-    }
-    if((param==='temperature' || (msg.includes('unsupported') && msg.includes('temperature'))) && body.temperature!==undefined){
-      delete body.temperature;
-      notes.push('检测到当前模型不支持 temperature，已自动移除该参数并重试。');
-      continue;
-    }
-    throw new Error(lastError);
-  }
-  throw new Error(lastError || '请求失败，且自动兼容重试已用尽。');
-}
-async function testConnection(){
-  setLog('modelLog','正在测试连通性...');
-  try{
-    const body={model:$('modelId').value.trim(),messages:[{role:'system',content:'Reply with OK only.'},{role:'user',content:'Connection test'}],max_tokens:8};
-    const {json,notes}=await callChatCompletions(body);
-    const out=json.choices?.[0]?.message?.content || json.choices?.[0]?.text || '';
-    notes.forEach(n=>log('modelLog',n));
-    log('modelLog','连通测试成功，模型返回：'+out.trim());
-  }catch(e){
-    log('modelLog','连通测试失败：'+(e.message||e)+'. 请检查 Base URL、API Key、模型 ID；如出现 CORS/Failed to fetch，说明当前 Provider 不允许浏览器直连。');
-  }
+async function testConnection(){ setLog('modelLog','正在测试连通性...'); try{ const body={model:$('modelId').value.trim(),messages:[{role:'system',content:'Reply with OK only.'},{role:'user',content:'Connection test'}],max_tokens:8}; const res=await fetch(endpoint('/chat/completions'),{method:'POST',headers:apiHeaders(),body:JSON.stringify(body)}); const text=await res.text(); if(!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0,800)}`); const json=JSON.parse(text); const out=json.choices?.[0]?.message?.content || json.choices?.[0]?.text || ''; log('modelLog','连通测试成功，模型返回：'+out.trim()); }catch(e){ log('modelLog','连通测试失败：'+(e.message||e)+'. 请检查 Base URL、API Key、模型 ID；如出现 CORS/Failed to fetch，说明当前 Provider 不允许浏览器直连。'); }
 }
 async function readFileText(file){ const buf=await file.arrayBuffer(); for(const enc of ['utf-8','gb18030']){ try{return {text:new TextDecoder(enc,{fatal:true}).decode(buf),encoding:enc};}catch(e){} } return {text:new TextDecoder('utf-8').decode(buf),encoding:'utf-8-fallback'}; }
 function parseCSV(text){ if(text.charCodeAt(0)===0xfeff) text=text.slice(1); const rows=[]; let row=[],cell='',i=0,q=false; while(i<text.length){ const ch=text[i],nx=text[i+1]; if(q){ if(ch==='"'){ if(nx==='"'){cell+='"';i+=2;continue;} q=false;i++;continue;} cell+=ch;i++;continue;} if(ch==='"'){q=true;i++;continue;} if(ch===','){row.push(cell);cell='';i++;continue;} if(ch==='\n'){row.push(cell);rows.push(row);row=[];cell='';i++;continue;} if(ch==='\r'){ if(nx==='\n'){row.push(cell);rows.push(row);row=[];cell='';i+=2;continue;} row.push(cell);rows.push(row);row=[];cell='';i++;continue;} cell+=ch;i++; } if(cell!==''||row.length){row.push(cell);rows.push(row);} return rows; }
@@ -263,57 +170,40 @@ function stringifyCSV(rows){ return '\ufeff'+rows.map(r=>r.map(csvEscape).join('
 function findCol(headers,name){ return headers.findIndex(h=>h===name || String(h).trim()===name); }
 function autoPick(headers,cands){ const lower=headers.map(h=>String(h).trim().toLowerCase()); for(const c of cands){ const idx=lower.indexOf(c.toLowerCase()); if(idx>=0)return headers[idx]; } return headers[0]||''; }
 function fillColumnSelects(headers){ const selects=[$('sourceColumn'),$('countryColumn')]; selects.forEach(sel=>{ const keep=sel.value; sel.innerHTML=sel.id==='countryColumn'?'<option value="">不使用列</option>':''; headers.forEach(h=>{ const o=document.createElement('option'); o.value=h; o.textContent=h; sel.appendChild(o); }); if([...sel.options].some(o=>o.value===keep)) sel.value=keep; }); $('sourceColumn').value=autoPick(headers,['source_text','source text','原文','待翻译文本','text','source','content','英文','中文']); }
-function updateTranslateInfo(){ $('translateFileInfo').textContent= state.translateFiles.length?`已载入 ${state.translateFiles.length} 个 CSV：`+state.translateFiles.map(x=>x.name).join('；'):'尚未选择文件。'; stat(); }
+function updateTranslateInfo(){ $('translateFileInfo').textContent= state.translateFiles.length?`已载入 ${state.translateFiles.length} 个 CSV：`+state.translateFiles.map(x=>x.name).join('；'):'尚未上传文件。'; stat(); }
 async function loadTranslateFiles(files,folderHandle=null){ state.translateFiles=[]; state.translateFolder=folderHandle; for(const file of files){ if(file.name.toLowerCase().endsWith('.csv')) state.translateFiles.push({name:file.name,file,handle:file._handle||null}); } updateTranslateInfo(); if(state.translateFiles[0]){ try{ const {text}=await readFileText(state.translateFiles[0].file); const headers=parseCSV(text)[0]||[]; fillColumnSelects(headers); }catch(e){ log('translateLog','读取表头失败：'+e.message); } } }
-async function pickTranslateFolder(){ if(!window.showDirectoryPicker){ alert('当前浏览器不支持文件夹模式，请使用 Edge/Chrome 或改用多文件模式。'); return; } try{ const root=await showDirectoryPicker({mode:'readwrite'}); const files=[]; for await(const [name,handle] of root.entries()){ if(handle.kind==='file' && name.toLowerCase().endsWith('.csv') && !name.toLowerCase().endsWith('_clean.csv')){ const f=await handle.getFile(); f._handle=handle; files.push(f); } } await loadTranslateFiles(files,root); log('translateLog','文件夹模式载入 '+files.length+' 个 CSV。'); }catch(e){ log('translateLog','选择文件夹取消或失败：'+(e.message||e)); } }
+async function pickTranslateFolder(){  try{ const root=await showDirectoryPicker({mode:'readwrite'}); const files=[]; for await(const [name,handle] of root.entries()){ if(handle.kind==='file' && name.toLowerCase().endsWith('.csv') && !name.toLowerCase().endsWith('_clean.csv')){ const f=await handle.getFile(); f._handle=handle; files.push(f); } } await loadTranslateFiles(files,root); log('translateLog','批量模式载入 '+files.length+' 个 CSV。'); }catch(e){ log('translateLog','上传CSV文件取消或失败：'+(e.message||e)); } }
 function promptTranslation(sourceLang,targetLang,sourceText){ return [{role:'system',content:`You are an expert linguist, specializing in translation from ${sourceLang} to ${targetLang}.`},{role:'user',content:`This is a ${sourceLang} to ${targetLang} translation, please provide the ${targetLang} translation for this text.\nDo not provide any explanations or text apart from the translation.\n\n${sourceText}`}]; }
 function promptSuggestions(sourceLang,targetLang,sourceText,translation,country){ const countryLine=country?`The final style and tone of the translation should match the style of ${targetLang} colloquially spoken in ${country}.\n`:''; return [{role:'system',content:`Your task is to carefully read a source text and a translation from ${sourceLang} to ${targetLang}, and then give constructive criticism and helpful suggestions to improve the translation.\n${countryLine}\nThe source text and initial translation, delimited by XML tags <SOURCE_TEXT></SOURCE_TEXT> and <TRANSLATION></TRANSLATION>, are as follows:\n<SOURCE_TEXT>\n${sourceText}\n</SOURCE_TEXT>\n<TRANSLATION>\n${translation}\n</TRANSLATION>\nWhen writing suggestions, pay attention to whether there are ways to improve the translation's\n(i) accuracy (by correcting errors of addition, mistranslation, omission, or untranslated text),\n(ii) fluency (by applying ${targetLang} grammar, spelling and punctuation rules, and ensuring there are no unnecessary repetitions),\n(iii) style (by ensuring the translations reflect the style of the source text and take into account any cultural context),\n(iv) terminology (by ensuring terminology use is consistent and reflects the source text domain; and by only ensuring you use equivalent idioms in ${targetLang}).\nWrite a list of specific, helpful and constructive suggestions for improving the translation.\nEach suggestion should address one specific part of the translation.\nOutput only the suggestions and nothing else.`}]; }
 function promptImprove(sourceLang,targetLang,sourceText,translation,suggestions){ return [{role:'system',content:`You are an expert linguist, specializing in translation editing from ${sourceLang} to ${targetLang}.`},{role:'user',content:`Your task is to carefully read, then edit, a translation from ${sourceLang} to ${targetLang}, taking into account a list of expert suggestions and constructive criticisms.\nThe source text, the initial translation, and the expert linguist suggestions are delimited by XML tags <SOURCE_TEXT></SOURCE_TEXT>, <TRANSLATION></TRANSLATION> and <EXPERT_SUGGESTIONS></EXPERT_SUGGESTIONS> as follows:\n<SOURCE_TEXT>\n${sourceText}\n</SOURCE_TEXT>\n<TRANSLATION>\n${translation}\n</TRANSLATION>\n<EXPERT_SUGGESTIONS>\n${suggestions}\n</EXPERT_SUGGESTIONS>\nPlease take into account the expert suggestions when editing the translation. Edit the translation by ensuring:\n(i) accuracy (by correcting errors of addition, mistranslation, omission, or untranslated text),\n(ii) fluency (by applying ${targetLang} grammar, spelling and punctuation rules and ensuring there are no unnecessary repetitions),\n(iii) style (by ensuring the translations reflect the style of the source text),\n(iv) terminology (inappropriate for context, inconsistent use), or\n(v) other errors.\nOutput only the new translation and nothing else.`}]; }
-function stripOutputObject(text){
-  let t=String(text??'').trim();
-  const fence=t.match(/^```(?:json|text)?\s*([\s\S]*?)\s*```$/i);
-  if(fence) t=fence[1].trim();
-  try{
-    const obj=JSON.parse(t);
-    if(obj && typeof obj==='object' && !Array.isArray(obj)){
-      for(const key of ['output','translation','result','text','content']){
-        if(Object.prototype.hasOwnProperty.call(obj,key)) return String(obj[key]??'').trim();
-      }
-    }
-  }catch(e){}
-  return t;
-}
-function cleanTranslationCell(value){ return stripOutputObject(value); }
-async function chat(messages){ const body={model:$('modelId').value.trim(),messages}; const temp=$('temperature').value.trim(), max=$('maxTokens').value.trim(); if(temp!=='') body.temperature=Number(temp); if(max!=='') body.max_tokens=Number(max); const {json,notes}=await callChatCompletions(body); if(notes.length) notes.forEach(n=>log('modelLog',n)); return stripOutputObject(json.choices?.[0]?.message?.content ?? json.choices?.[0]?.text ?? ''); }
+function stripOutputObject(text){ const t=String(text??'').trim(); try{ const obj=JSON.parse(t); if(obj && typeof obj==='object' && Object.prototype.hasOwnProperty.call(obj,'output')) return String(obj.output??''); }catch(e){} return String(text??'').trim(); }
+async function chat(messages){ const body={model:$('modelId').value.trim(),messages}; const temp=$('temperature').value.trim(), max=$('maxTokens').value.trim(); if(temp!=='') body.temperature=Number(temp); if(max!=='') body.max_tokens=Number(max); const res=await fetch(endpoint('/chat/completions'),{method:'POST',headers:apiHeaders(),body:JSON.stringify(body)}); const text=await res.text(); if(!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0,1000)}`); const json=JSON.parse(text); return stripOutputObject(json.choices?.[0]?.message?.content ?? json.choices?.[0]?.text ?? ''); }
 async function withRetry(fn,retries){ let last; for(let i=0;i<=retries;i++){ try{return await fn();}catch(e){ last=e; if(i<retries) await sleep(800*(i+1)); } } throw last; }
 async function workflowTranslate(sourceText,sourceLang,targetLang,country){ if($('workflowMode').value==='fast') return await chat(promptImprove(sourceLang,targetLang,sourceText,'','Translate the source text directly and produce a polished final translation.')); const initial=await chat(promptTranslation(sourceLang,targetLang,sourceText)); const sugg=await chat(promptSuggestions(sourceLang,targetLang,sourceText,initial,country)); const finalText=await chat(promptImprove(sourceLang,targetLang,sourceText,initial,sugg)); return finalText; }
 function buildTasksForRows(rows,headers,meta){ const srcIdx=findCol(headers,meta.sourceCol), countryIdx=meta.countryCol?findCol(headers,meta.countryCol):-1; const tasks=[]; for(let r=1;r<rows.length;r++){ const source=(rows[r][srcIdx]??'').trim(); if(!source) continue; for(const lang of meta.langs){ const country=countryIdx>=0 ? (rows[r][countryIdx]||meta.countryGlobal||'') : meta.countryGlobal; tasks.push({rowIndex:r,lang,source,country}); } } return tasks; }
-function makeWideOutput(rows,headers,taskResults,langs){ const newHeaders=[...headers]; const colMap={}; langs.forEach(lang=>{ let name=`生成结果_${lang}`; let base=name,n=1; while(newHeaders.includes(name)){name=`${base}_${n++}`;} colMap[lang]=newHeaders.length; newHeaders.push(name); }); const out=[newHeaders]; for(let r=1;r<rows.length;r++){ const row=[...rows[r]]; while(row.length<newHeaders.length) row.push(''); out.push(row); } taskResults.forEach(x=>{ out[x.rowIndex][colMap[x.lang]]=x.error?`[ERROR] ${x.error}`:cleanTranslationCell(x.text); }); return out; }
-function makeLongOutput(rows,headers,taskResults){ const out=[[...headers,'target_lang','translation','error']]; taskResults.forEach(x=>{ const row=[...(rows[x.rowIndex]||[])]; while(row.length<headers.length) row.push(''); out.push([...row,x.lang,x.error?'':cleanTranslationCell(x.text),x.error||'']); }); return out; }
+function makeWideOutput(rows,headers,taskResults,langs){ const newHeaders=[...headers]; const colMap={}; langs.forEach(lang=>{ let name=`生成结果_${lang}`; let base=name,n=1; while(newHeaders.includes(name)){name=`${base}_${n++}`;} colMap[lang]=newHeaders.length; newHeaders.push(name); }); const out=[newHeaders]; for(let r=1;r<rows.length;r++){ const row=[...rows[r]]; while(row.length<newHeaders.length) row.push(''); out.push(row); } taskResults.forEach(x=>{ out[x.rowIndex][colMap[x.lang]]=x.error?`[ERROR] ${x.error}`:x.text; }); return out; }
+function makeLongOutput(rows,headers,taskResults){ const out=[[...headers,'target_lang','translation','error']]; taskResults.forEach(x=>{ const row=[...(rows[x.rowIndex]||[])]; while(row.length<headers.length) row.push(''); out.push([...row,x.lang,x.error?'':x.text,x.error||'']); }); return out; }
 async function processOneTranslate(item,meta,totalCounter){ const {text}=await readFileText(item.file); const rows=parseCSV(text); if(!rows.length||!rows[0].length) throw new Error('没有识别到 CSV 表头'); const headers=rows[0]; const srcIdx=findCol(headers,meta.sourceCol); if(srcIdx<0) throw new Error('没有找到原文列：'+meta.sourceCol); const tasks=buildTasksForRows(rows,headers,meta); const results=[]; let cursor=0; async function worker(){ while(cursor<tasks.length && !state.cancel){ const t=tasks[cursor++]; try{ const translated=await withRetry(()=>workflowTranslate(t.source,meta.sourceLang,t.lang,t.country),meta.retries); results.push({...t,text:translated,error:''}); }catch(e){ results.push({...t,text:'',error:e.message||String(e)}); state.errors++; } state.done++; totalCounter.done++; updateProgress(totalCounter.done,totalCounter.total); stat(); } }
-  const workers=Array.from({length:meta.concurrency},()=>worker()); await Promise.all(workers); const outRows=meta.outputMode==='long'?makeLongOutput(rows,headers,results):makeWideOutput(rows,headers,results,meta.langs); const blob=new Blob([stringifyCSV(outRows)],{type:'text/csv;charset=utf-8'}); return {name:item.name,blob,downloadName:fileStem(item.name)+'_translated_clean.csv',tasks:tasks.length,errors:results.filter(x=>x.error).length}; }
+  const workers=Array.from({length:meta.concurrency},()=>worker()); await Promise.all(workers); const outRows=meta.outputMode==='long'?makeLongOutput(rows,headers,results):makeWideOutput(rows,headers,results,meta.langs); const blob=new Blob([stringifyCSV(outRows)],{type:'text/csv;charset=utf-8'}); return {name:item.name,blob,downloadName:fileStem(item.name)+'_clean.csv',tasks:tasks.length,errors:results.filter(x=>x.error).length}; }
 function updateProgress(done,total){ const pct=total?Math.round(done/total*100):0; $('translateBar').style.width=pct+'%'; $('translateProgressText').textContent=`进度：${done}/${total} (${pct}%)`; }
 async function ensureDir(root,name){ return await root.getDirectoryHandle(name,{create:true}); }
 async function ensureUniqueInDir(dir,name){ const i=name.lastIndexOf('.'), stem=i>=0?name.slice(0,i):name, suf=i>=0?name.slice(i):''; let c=name,n=1; while(true){ try{ await dir.getFileHandle(c,{create:false}); c=`${stem}_${n++}${suf}`; }catch(e){ return c; } } }
 async function writeBlob(dir,name,blob){ const h=await dir.getFileHandle(name,{create:true}); const w=await h.createWritable(); await w.write(blob); await w.close(); }
 function renderTranslateResult(res,status='ok',msg=''){ $('translateTableWrap').classList.remove('hidden'); $('translateEmpty').classList.add('hidden'); const tr=document.createElement('tr'); const dl=res.blob?`<a class="download-link secondary" href="#">下载</a>`:'-'; tr.innerHTML=`<td>${escapeHtml(res.name)}</td><td><span class="status ${status==='ok'?'ok':'fail'}">${status==='ok'?'成功':'失败'}</span></td><td>${res.tasks||0}</td><td>${escapeHtml(msg||(`错误 ${res.errors||0} 个；输出：${res.downloadName||''}`))}</td><td>${dl}</td>`; $('translateResultBody').appendChild(tr); if(res.blob){ tr.querySelector('a').addEventListener('click',e=>{e.preventDefault();downloadBlob(res.blob,res.downloadName);}); } }
-async function runTranslate(){ if(!state.translateFiles.length){alert('请先选择 CSV 文件或文件夹。');return;} const langs=selectedLangs(); if(!langs.length){alert('请至少选择一个目标语言。');return;} if(!$('apiKey').value.trim()){alert('请先填写 API Key。');return;} state.cancel=false; state.done=0; state.errors=0; stat(); $('runTranslateBtn').disabled=true; $('cancelTranslateBtn').disabled=false; $('downloadTranslateBtn').disabled=true; $('translateResultBody').innerHTML=''; $('translateTableWrap').classList.add('hidden'); $('translateEmpty').classList.remove('hidden'); state.translateResults=[]; setLog('translateLog','开始批量翻译...\n翻译完成后将自动清洗并导出纯文本 CSV。'); const meta={sourceCol:$('sourceColumn').value,sourceLang:$('sourceLang').value,countryGlobal:$('countryGlobal').value.trim(),countryCol:$('countryColumn').value,langs,concurrency:Number($('concurrency').value),retries:Number($('retries').value),outputMode:$('outputMode').value}; let total=0; for(const item of state.translateFiles){ try{ const {text}=await readFileText(item.file); const rows=parseCSV(text); total+=buildTasksForRows(rows,rows[0]||[],meta).length; }catch(e){} } const counter={done:0,total}; updateProgress(0,total); let cleanedDir=null, processedDir=null; if(state.translateFolder){ cleanedDir=await ensureDir(state.translateFolder,'Cleaned'); processedDir=await ensureDir(state.translateFolder,'Processed'); }
+async function runTranslate(){ if(!state.translateFiles.length){alert('请先上传 CSV 文件或文件夹。');return;} const langs=selectedLangs(); if(!langs.length){alert('请至少选择一个目标语言。');return;} if(!$('apiKey').value.trim()){alert('请先填写 API Key。');return;} state.cancel=false; state.done=0; state.errors=0; stat(); $('runTranslateBtn').disabled=true; $('cancelTranslateBtn').disabled=false; $('translateResultBody').innerHTML=''; $('translateTableWrap').classList.add('hidden'); $('translateEmpty').classList.remove('hidden'); state.translateResults=[]; setLog('translateLog','开始批量翻译...'); const meta={sourceCol:$('sourceColumn').value,sourceLang:$('sourceLang').value,countryGlobal:$('countryGlobal').value.trim(),countryCol:$('countryColumn').value,langs,concurrency:Number($('concurrency').value),retries:Number($('retries').value),outputMode:$('outputMode').value}; let total=0; for(const item of state.translateFiles){ try{ const {text}=await readFileText(item.file); const rows=parseCSV(text); total+=buildTasksForRows(rows,rows[0]||[],meta).length; }catch(e){} } const counter={done:0,total}; updateProgress(0,total); let cleanedDir=null, processedDir=null; if(state.translateFolder){ cleanedDir=await ensureDir(state.translateFolder,'Cleaned'); processedDir=await ensureDir(state.translateFolder,'Processed'); }
   for(const item of state.translateFiles){ if(state.cancel) break; try{ log('translateLog','处理文件：'+item.name); const res=await processOneTranslate(item,meta,counter); if(state.translateFolder){ const cname=await ensureUniqueInDir(cleanedDir,res.downloadName); await writeBlob(cleanedDir,cname,res.blob); const origBlob=new Blob([await item.file.arrayBuffer()],{type:item.file.type||'text/csv'}); const pname=await ensureUniqueInDir(processedDir,item.name); await writeBlob(processedDir,pname,origBlob); await state.translateFolder.removeEntry(item.name); res.blob=null; res.downloadName=cname; renderTranslateResult(res,'ok',`已写入 Cleaned/${cname}；原文件已移动到 Processed/${pname}；错误 ${res.errors||0} 个。`); }else{ state.translateResults.push(res); renderTranslateResult(res,'ok'); } log('translateLog','完成：'+item.name); }catch(e){ state.errors++; stat(); renderTranslateResult({name:item.name,tasks:0},'fail',e.message||String(e)); log('translateLog','失败：'+item.name+'；'+(e.message||e)); } }
-  $('runTranslateBtn').disabled=false; $('cancelTranslateBtn').disabled=true; $('downloadTranslateBtn').disabled=!state.translateResults.some(r=>r.blob); log('translateLog',state.cancel?'已停止。':'批量翻译结束。'); }
+  $('runTranslateBtn').disabled=false; $('cancelTranslateBtn').disabled=true; log('translateLog',state.cancel?'已停止。':'批量翻译结束。'); }
 async function downloadAllTranslate(){ for(const r of state.translateResults.filter(x=>x.blob)){ downloadBlob(r.blob,r.downloadName); await sleep(180); } }
 function extractJsonField(v,key){ const raw=String(v??''); const t=raw.trim(); if(!t)return {value:v,changed:false}; try{ const obj=JSON.parse(t); if(obj && typeof obj==='object' && Object.prototype.hasOwnProperty.call(obj,key)){ return {value:obj[key],changed:String(obj[key])!==raw}; } }catch(e){} return {value:v,changed:false}; }
 async function cleanOneFile(file,col,key){ const {text,encoding}=await readFileText(file); const rows=parseCSV(text); if(!rows.length||!rows[0].length) return {name:file.name,status:'skip',count:0,msg:'没有识别到表头'}; const headers=rows[0], idx=findCol(headers,col); if(idx<0) return {name:file.name,status:'skip',count:0,msg:'没有找到列「'+col+'」；当前列：'+headers.join(' / ')}; let count=0; for(let r=1;r<rows.length;r++){ while(rows[r].length<headers.length) rows[r].push(''); const ex=extractJsonField(rows[r][idx],key); if(ex.changed) count++; rows[r][idx]=ex.value; } const blob=new Blob([stringifyCSV(rows)],{type:'text/csv;charset=utf-8'}); return {name:file.name,status:'ok',count,msg:'读取编码：'+encoding,blob,downloadName:fileStem(file.name)+'_clean.csv'}; }
 function renderCleanResult(r){ $('cleanTableWrap').classList.remove('hidden'); $('cleanEmpty').classList.add('hidden'); const tr=document.createElement('tr'); tr.innerHTML=`<td>${escapeHtml(r.name)}</td><td><span class="status ${r.status==='ok'?'ok':r.status==='skip'?'skip':'fail'}">${r.status==='ok'?'成功':r.status==='skip'?'跳过':'失败'}</span></td><td>${r.count||0}</td><td>${escapeHtml(r.msg||'')}</td><td>${r.blob?'<a href="#" class="download-link secondary">下载</a>':'-'}</td>`; $('cleanResultBody').appendChild(tr); if(r.blob) tr.querySelector('a').addEventListener('click',e=>{e.preventDefault();downloadBlob(r.blob,r.downloadName);}); }
-async function cleanFiles(files,root=null){ state.cleanResults=[]; $('cleanResultBody').innerHTML=''; $('cleanTableWrap').classList.add('hidden'); $('cleanEmpty').classList.remove('hidden'); $('downloadCleanBtn').disabled=true; setLog('cleanLog','开始清洗...'); const col=$('cleanColumn').value.trim()||'生成结果', key=$('cleanKey').value.trim()||'output'; let cleanedDir=null, processedDir=null; if(root){ cleanedDir=await ensureDir(root,'Cleaned'); processedDir=await ensureDir(root,'Processed'); } for(const file of Array.from(files).filter(f=>f.name.toLowerCase().endsWith('.csv'))){ try{ let r=await cleanOneFile(file,col,key); if(root && r.status==='ok'){ const cname=await ensureUniqueInDir(cleanedDir,r.downloadName); await writeBlob(cleanedDir,cname,r.blob); const pname=await ensureUniqueInDir(processedDir,file.name); await writeBlob(processedDir,pname,new Blob([await file.arrayBuffer()],{type:file.type||'text/csv'})); await root.removeEntry(file.name); r.blob=null; r.downloadName=cname; r.msg += `；已写入 Cleaned/${cname}；原文件已移动到 Processed/${pname}`; } else if(r.blob) state.cleanResults.push(r); renderCleanResult(r); log('cleanLog',`${r.status==='ok'?'完成':'跳过'}：${file.name}；清洗 ${r.count||0} 个单元格。`); }catch(e){ const r={name:file.name,status:'fail',count:0,msg:e.message||String(e)}; renderCleanResult(r); log('cleanLog','失败：'+file.name+'；'+r.msg); } } $('downloadCleanBtn').disabled=!state.cleanResults.some(r=>r.blob); log('cleanLog','清洗结束。'); }
-async function pickCleanFolder(){ if(!window.showDirectoryPicker){alert('当前浏览器不支持文件夹模式，请使用 Edge/Chrome 或改用多文件模式。');return;} try{ const root=await showDirectoryPicker({mode:'readwrite'}); const files=[]; for await(const [name,handle] of root.entries()){ if(handle.kind==='file' && name.toLowerCase().endsWith('.csv') && !name.toLowerCase().endsWith('_clean.csv')) files.push(await handle.getFile()); } await cleanFiles(files,root); }catch(e){ log('cleanLog','选择文件夹取消或失败：'+(e.message||e)); } }
+async function cleanFiles(files,root=null){ state.cleanResults=[]; $('cleanResultBody').innerHTML=''; $('cleanTableWrap').classList.add('hidden'); $('cleanEmpty').classList.remove('hidden');  setLog('cleanLog','开始清洗...'); const col=$('cleanColumn').value.trim()||'生成结果', key=$('cleanKey').value.trim()||'output'; let cleanedDir=null, processedDir=null; if(root){ cleanedDir=await ensureDir(root,'Cleaned'); processedDir=await ensureDir(root,'Processed'); } for(const file of Array.from(files).filter(f=>f.name.toLowerCase().endsWith('.csv'))){ try{ let r=await cleanOneFile(file,col,key); if(root && r.status==='ok'){ const cname=await ensureUniqueInDir(cleanedDir,r.downloadName); await writeBlob(cleanedDir,cname,r.blob); const pname=await ensureUniqueInDir(processedDir,file.name); await writeBlob(processedDir,pname,new Blob([await file.arrayBuffer()],{type:file.type||'text/csv'})); await root.removeEntry(file.name); r.blob=null; r.downloadName=cname; r.msg += `；已写入 Cleaned/${cname}；原文件已移动到 Processed/${pname}`; } else if(r.blob) state.cleanResults.push(r); renderCleanResult(r); log('cleanLog',`${r.status==='ok'?'完成':'跳过'}：${file.name}；清洗 ${r.count||0} 个单元格。`); }catch(e){ const r={name:file.name,status:'fail',count:0,msg:e.message||String(e)}; renderCleanResult(r); log('cleanLog','失败：'+file.name+'；'+r.msg); } }  log('cleanLog','清洗结束。'); }
+async function pickCleanFolder(){  try{ const root=await showDirectoryPicker({mode:'readwrite'}); const files=[]; for await(const [name,handle] of root.entries()){ if(handle.kind==='file' && name.toLowerCase().endsWith('.csv') && !name.toLowerCase().endsWith('_clean.csv')) files.push(await handle.getFile()); } await cleanFiles(files,root); }catch(e){ log('cleanLog','上传CSV文件取消或失败：'+(e.message||e)); } }
 async function downloadAllClean(){ for(const r of state.cleanResults.filter(x=>x.blob)){ downloadBlob(r.blob,r.downloadName); await sleep(180); } }
 function setupDrop(id,cb){ const dz=$(id); ['dragenter','dragover'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.add('dragover');})); ['dragleave','drop'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.remove('dragover');})); dz.addEventListener('drop',e=>cb(e.dataTransfer.files)); }
-function init(){ tabs(); loadSettings(); renderLanguages(); renderModels(); $('dslSummary').textContent=`App: ${DSL.appName}\nProvider: ${DSL.provider}\nDefault model: ${DSL.model}\nInputs: target_lang, source_text, source_lang, country\nTarget languages: ${DSL.targetLangOptions.join(', ')}\nWorkflow:\n- ${DSL.workflow.join('\n- ')}\nFinal output key in Dify: output\n\nNote: 批量翻译和清洗已融合；本网页翻译输出会自动写入 clean CSV，不再把最终结果包装成 {"output":"..."}，也会兼容模型偶发返回的 JSON 包裹。`;
+function init(){ tabs(); loadSettings(); renderLanguages(); renderModels(); 
   $('modelFilter').addEventListener('input',renderModels); $('refreshModelsBtn').addEventListener('click',refreshModels); $('testBtn').addEventListener('click',testConnection); $('saveSettingsBtn').addEventListener('click',saveSettings); $('forgetSettingsBtn').addEventListener('click',forgetSettings);
-  $('selectAllLangBtn').addEventListener('click',()=>document.querySelectorAll('.langCheck').forEach(c=>c.checked=true)); $('clearLangBtn').addEventListener('click',()=>document.querySelectorAll('.langCheck').forEach(c=>c.checked=false)); $('selectEuroBtn').addEventListener('click',()=>selectLangs(['German','Spanish','French','Italian','Dutch','Polish','Portuguese','Danish'])); $('addLangBtn').addEventListener('click',()=>{ const v=$('customLang').value.trim(); if(!v)return; if(!DSL.targetLangOptions.includes(v)) DSL.targetLangOptions.push(v); $('customLang').value=''; renderLanguages(); document.querySelector(`.langCheck[value="${CSS.escape(v)}"]`).checked=true; });
-  $('pickFolderTranslateBtn').addEventListener('click',pickTranslateFolder); $('translateFiles').addEventListener('change',e=>loadTranslateFiles(e.target.files)); $('clearTranslateBtn').addEventListener('click',()=>{state.translateFiles=[];state.translateFolder=null;updateTranslateInfo();$('translateResultBody').innerHTML='';}); setupDrop('translateDrop',files=>loadTranslateFiles(files)); $('runTranslateBtn').addEventListener('click',runTranslate); $('cancelTranslateBtn').addEventListener('click',()=>{state.cancel=true;log('translateLog','收到停止指令；正在等待当前请求结束。');}); $('downloadTranslateBtn').addEventListener('click',downloadAllTranslate);
-  $('pickFolderCleanBtn').addEventListener('click',pickCleanFolder); $('cleanFiles').addEventListener('change',e=>cleanFiles(e.target.files)); setupDrop('cleanDrop',files=>cleanFiles(files)); $('downloadCleanBtn').addEventListener('click',downloadAllClean); $('clearCleanBtn').addEventListener('click',()=>{$('cleanResultBody').innerHTML='';$('cleanTableWrap').classList.add('hidden');$('cleanEmpty').classList.remove('hidden');state.cleanResults=[];$('downloadCleanBtn').disabled=true;setLog('cleanLog','准备就绪。');});
-  if(!window.showDirectoryPicker){ log('translateLog','当前浏览器不支持文件夹模式；可使用多文件模式。'); log('cleanLog','当前浏览器不支持文件夹模式；可使用多文件模式。'); }
+  $('selectAllLangBtn').addEventListener('click',()=>document.querySelectorAll('.langCheck').forEach(c=>c.checked=true)); $('clearLangBtn').addEventListener('click',()=>document.querySelectorAll('.langCheck').forEach(c=>c.checked=false)); $('selectEuroBtn').addEventListener('click',()=>selectLangs(['German','Spanish','French','Italian','Dutch','Polish','Portuguese','Danish','Swedish'])); $('addLangBtn').addEventListener('click',()=>{ const v=$('customLang').value.trim(); if(!v)return; const checkedBefore=selectedLangs(); if(!DSL.targetLangOptions.some(lang=>lang.toLowerCase()===v.toLowerCase())) DSL.targetLangOptions.push(v); $('customLang').value=''; renderLanguages(); selectLangs(Array.from(new Set([...checkedBefore,v]))); });  $('translateFiles').addEventListener('change',e=>loadTranslateFiles(e.target.files)); $('clearTranslateBtn').addEventListener('click',()=>{state.translateFiles=[];state.translateFolder=null;updateTranslateInfo();$('translateResultBody').innerHTML='';}); setupDrop('translateDrop',files=>loadTranslateFiles(files)); $('runTranslateBtn').addEventListener('click',runTranslate); $('cancelTranslateBtn').addEventListener('click',()=>{state.cancel=true;log('translateLog','收到停止指令；正在等待当前请求结束。');}); 
   stat(); }
 init();
 </script>
