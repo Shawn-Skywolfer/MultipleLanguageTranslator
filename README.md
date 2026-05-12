@@ -281,3 +281,39 @@ python3 -m http.server 8000
 ## 许可证
 
 仓库当前未声明开源许可证。如需对外分发或商业使用，请先补充明确的 LICENSE 文件。
+
+## Agent Skill
+
+本仓库现在包含一个可在 Claude Code、OpenCode、Codex 等支持 `SKILL.md` 约定的代理工具中复用的多语言翻译 Skill：
+
+```text
+skills/multilingual-translator/
+├── SKILL.md
+├── agents/openai.yaml
+├── references/provider-config.md
+└── scripts/translate_csv.py
+```
+
+### 安装/使用建议
+
+- Claude Code：将 `skills/multilingual-translator` 复制到你的 Claude Code Skills 目录，或在支持项目级 Skills 的环境中直接引用该目录。
+- Codex：可复制到 `~/.codex/skills/multilingual-translator`，重启 Codex 后通过 `$multilingual-translator` 或自然语言触发。
+- OpenCode：可复制到 OpenCode 使用的 Skills 目录或通过兼容 `SKILL.md` 的 Skills 插件加载。
+
+Skill 内置了批量 CSV 翻译 CLI，可在不打开网页的情况下调用 OpenAI-compatible Provider：
+
+```bash
+python skills/multilingual-translator/scripts/translate_csv.py \
+  --input input.csv \
+  --output output_clean.csv \
+  --source-column source \
+  --source-language English \
+  --target-languages German,French,Spanish \
+  --provider-base-url https://open.bigmodel.cn/api/paas/v4 \
+  --model glm-5.1 \
+  --api-key-env BIGMODEL_API_KEY \
+  --output-mode wide \
+  --mode fast
+```
+
+请通过环境变量传入 API Key，避免把密钥写入仓库或命令示例。
