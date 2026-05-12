@@ -1,0 +1,6 @@
+interface:
+  display_name: "Multilingual Translator"
+  short_description: "Batch multilingual CSV and copy translation"
+  default_prompt: "Use $multilingual-translator to translate a CSV or copy deck into multiple localized languages."
+policy:
+  allow_implicit_invocation: true

@@ -61,12 +61,23 @@ npx serve .
 
 | 字段 | 默认值/示例 | 说明 |
 | --- | --- | --- |
-| Provider 名称 | `AIHubMix` | 仅用于页面展示 |
-| Base URL | `https://aihubmix.com/v1` | OpenAI-compatible API 根地址 |
+| Provider 名称 | `AIHubMix` | 仅用于页面展示，也可点击页面里的常用 Provider 快速配置按钮自动填充 |
+| Base URL | `https://aihubmix.com/v1` | OpenAI-compatible API 根地址；页面会对 `https://api.kimi.com/coding` 自动补齐为 `https://api.kimi.com/coding/v1` |
 | API Key | `sk-...` | Provider API Key；请不要带 `Bearer` 前缀、中文空格、引号或备注文字 |
-| 当前模型 ID | `gpt-5.4` | 实际调用的模型 ID |
+| 当前模型 ID | `gpt-5.4` | 实际调用的模型 ID；快速配置会同步填入该 Provider 推荐默认模型 |
 | Temperature | 留空或数字 | 留空则不传该参数 |
 | Max Tokens | 留空或正整数 | 会优先使用 `max_tokens`，必要时自动切换为 `max_completion_tokens` |
+
+
+### 常用 Provider 快速配置
+
+页面内置以下快捷按钮，点击后会自动填充 Provider 名称、Base URL、默认模型 ID 和候选模型列表；API Key 仍需你手动填写，快捷按钮不会保存或覆盖 API Key。
+
+| Provider | Base URL | 默认模型 | 说明 |
+| --- | --- | --- | --- |
+| AIHubMix | `https://aihubmix.com/v1` | `gpt-5.4` | 项目默认配置，仍可通过刷新模型列表获取账号可用模型。 |
+| 智谱 BigModel | `https://open.bigmodel.cn/api/paas/v4` | `glm-5.1` | 使用智谱 OpenAI-compatible Chat Completions 路径 `{Base URL}/chat/completions`。 |
+| Kimi Code | `https://api.kimi.com/coding/v1` | `kimi-for-coding` | Kimi Code 的 OpenAI-compatible Base URL 需要包含 `/v1`；如果误填 `https://api.kimi.com/coding`，页面会在发请求时自动补齐。 |
 
 ### 连通测试
 
@@ -228,7 +239,7 @@ id,source,country,target_language,translation
 常见原因包括：
 
 - API Key 为空或复制时带了多余字符。
-- Base URL 不正确。
+- Base URL 不正确。Kimi Code 请优先使用 `https://api.kimi.com/coding/v1`；智谱请使用 `https://open.bigmodel.cn/api/paas/v4`。
 - 模型 ID 不存在或当前账号无权限。
 - Provider 不允许浏览器跨域请求。
 - 当前网络无法访问 Provider。
@@ -270,3 +281,39 @@ python3 -m http.server 8000
 ## 许可证
 
 仓库当前未声明开源许可证。如需对外分发或商业使用，请先补充明确的 LICENSE 文件。
+
+## Agent Skill
+
+本仓库现在包含一个可在 Claude Code、OpenCode、Codex 等支持 `SKILL.md` 约定的代理工具中复用的多语言翻译 Skill：
+
+```text
+skills/multilingual-translator/
+├── SKILL.md
+├── agents/openai.yaml
+├── references/provider-config.md
+└── scripts/translate_csv.py
+```
+
+### 安装/使用建议
+
+- Claude Code：将 `skills/multilingual-translator` 复制到你的 Claude Code Skills 目录，或在支持项目级 Skills 的环境中直接引用该目录。
+- Codex：可复制到 `~/.codex/skills/multilingual-translator`，重启 Codex 后通过 `$multilingual-translator` 或自然语言触发。
+- OpenCode：可复制到 OpenCode 使用的 Skills 目录或通过兼容 `SKILL.md` 的 Skills 插件加载。
+
+Skill 内置了批量 CSV 翻译 CLI，可在不打开网页的情况下调用 OpenAI-compatible Provider：
+
+```bash
+python skills/multilingual-translator/scripts/translate_csv.py \
+  --input input.csv \
+  --output output_clean.csv \
+  --source-column source \
+  --source-language English \
+  --target-languages German,French,Spanish \
+  --provider-base-url https://open.bigmodel.cn/api/paas/v4 \
+  --model glm-5.1 \
+  --api-key-env BIGMODEL_API_KEY \
+  --output-mode wide \
+  --mode fast
+```
+
+请通过环境变量传入 API Key，避免把密钥写入仓库或命令示例。
