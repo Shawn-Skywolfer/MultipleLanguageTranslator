@@ -79,6 +79,11 @@
         <button class="ghost" id="saveSettingsBtn">保存配置到本机</button>
         <button class="danger" id="forgetSettingsBtn">清除本机保存</button>
       </div>
+      <div class="field">
+        <label>常用 Provider 快速配置</label>
+        <div class="button-row" id="providerPresetButtons"></div>
+        <div class="small">点击后只填充 Provider 名称、Base URL、模型 ID 和候选模型列表，不会保存或覆盖 API Key。</div>
+      </div>
       <div class="field"><label><input type="checkbox" id="saveKey" style="width:auto;height:auto" /> 保存 API Key 到本机浏览器 localStorage</label></div>
       <div class="notice yellow">如果连通测试显示 <strong>Failed to fetch / CORS</strong>，说明该 Provider 不允许浏览器网页直接调用。静态单 HTML 无法绕过这个浏览器安全限制，需要 Provider 开启 CORS，或使用你自己的轻量代理服务。</div>
       <div class="grid">
@@ -160,6 +165,11 @@ const DSL = {
   defaultOutputKey: 'output'
 };
 const DEFAULT_MODELS = ['gpt-5.4','gpt-4o-mini','gpt-4o','gpt-4.1-mini','claude-3-5-sonnet-latest','claude-sonnet-4-5','gemini-2.5-flash','gemini-2.5-pro','deepseek-chat','deepseek-reasoner','qwen-plus','qwen-max'];
+const PROVIDER_PRESETS = [
+  {name:'AIHubMix', baseUrl:'https://aihubmix.com/v1', model:'gpt-5.4', models:DEFAULT_MODELS},
+  {name:'智谱 BigModel', baseUrl:'https://open.bigmodel.cn/api/paas/v4', model:'glm-5.1', models:['glm-5.1','glm-5-turbo','glm-5','glm-4.7','glm-4.7-flash','glm-4.7-flashx','glm-4.6','glm-4.5-air','glm-4.5-airx','glm-4.5-flash','glm-4-flash-250414','glm-4-flashx-250414']},
+  {name:'Kimi Code', baseUrl:'https://api.kimi.com/coding/v1', model:'kimi-for-coding', models:['kimi-for-coding']}
+];
 const $ = id => document.getElementById(id);
 const state = { models:[...DEFAULT_MODELS], translateFiles:[], translateFolder:null, translateResults:[], cleanResults:[], cancel:false, done:0, errors:0 };
 function log(id,msg){ const box=$(id); const t=new Date().toLocaleTimeString(); box.textContent += `\n[${t}] ${msg}`; box.scrollTop=box.scrollHeight; }
@@ -167,7 +177,12 @@ function setLog(id,msg){ $(id).textContent=msg; }
 function stat(){ $('statFiles').textContent=state.translateFiles.length; $('statDone').textContent=state.done; $('statErrors').textContent=state.errors; }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function sanitizeBaseUrl(url){ return String(url||'').trim().replace(/\/+$/,''); }
-function endpoint(path){ return sanitizeBaseUrl($('baseUrl').value) + '/' + path.replace(/^\//,''); }
+function normalizeKnownBaseUrl(url){
+  const base = sanitizeBaseUrl(url);
+  if (/^https:\/\/api\.kimi\.com\/coding$/i.test(base)) return base + '/v1';
+  return base;
+}
+function endpoint(path){ return normalizeKnownBaseUrl($('baseUrl').value) + '/' + path.replace(/^\//,''); }
 function cleanApiKey(raw){
   let key = String(raw || '');
   key = key.replace(/[\u200B-\u200D\uFEFF]/g, '');
@@ -277,6 +292,27 @@ function renderLanguages(){ const box=$('languageBox'); box.innerHTML=''; DSL.ta
 function selectedLangs(){ return Array.from(document.querySelectorAll('.langCheck:checked')).map(x=>x.value); }
 function selectLangs(list){ document.querySelectorAll('.langCheck').forEach(c=>c.checked=list.includes(c.value)); }
 function renderModels(){ const filter=$('modelFilter').value.trim().toLowerCase(); const list=$('modelList'); list.innerHTML=''; const models=state.models.filter(m=>!filter||m.toLowerCase().includes(filter)); if(!models.length){ list.innerHTML='<div class="model-item"><span class="muted">没有匹配模型</span></div>'; return; } models.forEach(m=>{ const div=document.createElement('div'); div.className='model-item'; div.innerHTML=`<span>${escapeHtml(m)}</span><button class="ghost" type="button">使用</button>`; div.addEventListener('click',()=>{$('modelId').value=m; log('modelLog','已选择模型：'+m);}); list.appendChild(div); }); }
+function applyProviderPreset(preset){
+  $('providerName').value = preset.name;
+  $('baseUrl').value = preset.baseUrl;
+  $('modelId').value = preset.model;
+  state.models = Array.from(new Set(preset.models));
+  $('modelFilter').value = '';
+  renderModels();
+  log('modelLog', `已填充 ${preset.name}：${preset.baseUrl}，模型 ${preset.model}。请继续填写对应 API Key 后测试。`);
+}
+function renderProviderPresets(){
+  const box = $('providerPresetButtons');
+  box.innerHTML = '';
+  PROVIDER_PRESETS.forEach(preset => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'secondary';
+    btn.textContent = preset.name;
+    btn.addEventListener('click', () => applyProviderPreset(preset));
+    box.appendChild(btn);
+  });
+}
 function saveSettings(){ const data={providerName:$('providerName').value,baseUrl:$('baseUrl').value,modelId:$('modelId').value,temperature:$('temperature').value,maxTokens:$('maxTokens').value,saveKey:$('saveKey').checked,apiKey:$('saveKey').checked?cleanApiKey($('apiKey').value):''}; localStorage.setItem('difyDslTranslatorSettings',JSON.stringify(data)); log('modelLog','已保存配置到本机浏览器。'+($('saveKey').checked?' API Key 已保存。':' API Key 未保存。')); }
 function loadSettings(){ try{ const raw=localStorage.getItem('difyDslTranslatorSettings'); if(!raw)return; const d=JSON.parse(raw); ['providerName','baseUrl','modelId','temperature','maxTokens','apiKey'].forEach(k=>{ if(d[k]!==undefined && $(k)) $(k).value=d[k]; }); $('saveKey').checked=!!d.saveKey; }catch(e){} }
 function forgetSettings(){ localStorage.removeItem('difyDslTranslatorSettings'); log('modelLog','已清除本机保存的配置。'); }
@@ -292,6 +328,7 @@ async function testConnection(){
         {role:'user', content:'Connection test'}
       ]
     });
+    log('modelLog', '请求地址：' + endpoint('/chat/completions'));
     const json = await postChatCompletion(body, 'modelLog');
     const out = json.choices?.[0]?.message?.content || json.choices?.[0]?.text || '';
     log('modelLog','连通测试成功，模型返回：'+out.trim());
@@ -344,7 +381,7 @@ async function cleanFiles(files,root=null){ state.cleanResults=[]; $('cleanResul
 async function pickCleanFolder(){  try{ const root=await showDirectoryPicker({mode:'readwrite'}); const files=[]; for await(const [name,handle] of root.entries()){ if(handle.kind==='file' && name.toLowerCase().endsWith('.csv') && !name.toLowerCase().endsWith('_clean.csv')) files.push(await handle.getFile()); } await cleanFiles(files,root); }catch(e){ log('cleanLog','上传CSV文件取消或失败：'+(e.message||e)); } }
 async function downloadAllClean(){ for(const r of state.cleanResults.filter(x=>x.blob)){ downloadBlob(r.blob,r.downloadName); await sleep(180); } }
 function setupDrop(id,cb){ const dz=$(id); ['dragenter','dragover'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.add('dragover');})); ['dragleave','drop'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.remove('dragover');})); dz.addEventListener('drop',e=>cb(e.dataTransfer.files)); }
-function init(){ tabs(); loadSettings(); renderLanguages(); renderModels(); 
+function init(){ tabs(); loadSettings(); renderLanguages(); renderProviderPresets(); renderModels();
   $('modelFilter').addEventListener('input',renderModels); $('refreshModelsBtn').addEventListener('click',refreshModels); $('testBtn').addEventListener('click',testConnection); $('saveSettingsBtn').addEventListener('click',saveSettings); $('forgetSettingsBtn').addEventListener('click',forgetSettings);
   $('selectAllLangBtn').addEventListener('click',()=>document.querySelectorAll('.langCheck').forEach(c=>c.checked=true)); $('clearLangBtn').addEventListener('click',()=>document.querySelectorAll('.langCheck').forEach(c=>c.checked=false)); $('selectEuroBtn').addEventListener('click',()=>selectLangs(['German','Spanish','French','Italian','Dutch','Polish','Portuguese','Danish','Swedish'])); $('addLangBtn').addEventListener('click',()=>{ const v=$('customLang').value.trim(); if(!v)return; const checkedBefore=selectedLangs(); if(!DSL.targetLangOptions.some(lang=>lang.toLowerCase()===v.toLowerCase())) DSL.targetLangOptions.push(v); $('customLang').value=''; renderLanguages(); selectLangs(Array.from(new Set([...checkedBefore,v]))); });  $('translateFiles').addEventListener('change',e=>loadTranslateFiles(e.target.files)); $('clearTranslateBtn').addEventListener('click',()=>{state.translateFiles=[];state.translateFolder=null;updateTranslateInfo();$('translateResultBody').innerHTML='';}); setupDrop('translateDrop',files=>loadTranslateFiles(files)); $('runTranslateBtn').addEventListener('click',runTranslate); $('cancelTranslateBtn').addEventListener('click',()=>{state.cancel=true;log('translateLog','收到停止指令；正在等待当前请求结束。');}); 
   stat(); }
