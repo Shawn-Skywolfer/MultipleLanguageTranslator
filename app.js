@@ -700,7 +700,8 @@ async function zipFileToDataUrl(zip, path) {
 }
 async function extractPptxDocument(file) {
   log('documentLog', `开始解析 PPTX：${file.name}`);
-  const zip = await window.JSZip.loadAsync(await file.arrayBuffer());
+  const sourceBuffer = await file.arrayBuffer();
+  const zip = await window.JSZip.loadAsync(sourceBuffer);
   const presentation = xmlFrom(await zip.file('ppt/presentation.xml').async('text'));
   const sizeNode = firstLocalName(presentation, 'sldSz');
   const width = emuToInch(attrAny(sizeNode, ['cx'])) || 13.333;
@@ -726,8 +727,10 @@ async function extractPptxDocument(file) {
       const rPr = firstLocalName(txBody, 'rPr') || firstLocalName(txBody, 'defRPr') || firstLocalName(sp, 'rPr');
       const fontSize = Math.max(10, Number(attrAny(rPr, ['sz']) || 1800) / 100);
       const idNode = firstLocalName(sp, 'cNvPr');
+      const shapeNodeId = attrAny(idNode, ['id']) || String(shapes.length + 1);
       shapes.push({
-        id: `slide-${slideIndex}-shape-${attrAny(idNode, ['id']) || shapes.length + 1}`,
+        id: `slide-${slideIndex}-shape-${shapeNodeId}`,
+        shapeNodeId,
         text,
         x: emuToInch(attrAny(off, ['x'])),
         y: emuToInch(attrAny(off, ['y'])),
@@ -755,10 +758,10 @@ async function extractPptxDocument(file) {
         h: Math.max(0.5, emuToInch(attrAny(ext, ['cy']))),
       });
     }
-    slides.push({ index:slideIndex, shapes, images, background });
+    slides.push({ index:slideIndex, slidePath, relPath, shapes, images, background });
   }
   log('documentLog', `PPTX 解析完成：${file.name}，共 ${slides.length} 页。`);
-  return { type:'pptx', name:file.name, width, height, slides };
+  return { type:'pptx', name:file.name, width, height, slides, sourceBuffer };
 }
 function collectDocumentTasks(doc) {
   if (doc.type === 'pdf') {
@@ -851,41 +854,152 @@ async function buildPdfDocx(doc, lang, results) {
   const docxFile = new d.Document({ sections:[{ children }] });
   return await d.Packer.toBlob(docxFile);
 }
-async function buildReviewPptx(doc, lang, results) {
-  const pptx = new window.PptxGenJS();
-  const gap = 0.3;
-  const reviewWidth = Math.max(doc.width, 6.4);
-  pptx.defineLayout({ name:'DOC_REVIEW', width: doc.width + gap + reviewWidth, height: doc.height });
-  pptx.layout = 'DOC_REVIEW';
-  doc.slides.forEach(slideData => {
-    const slide = pptx.addSlide();
-    if (slideData.background?.type === 'color' && slideData.background.color) {
-      slide.background = { color: slideData.background.color };
-    } else {
-      slide.background = { color:'FFFFFF' };
-    }
-    if (slideData.background?.type === 'image' && slideData.background.data) {
-      slide.addImage({ data: slideData.background.data, x:0, y:0, w:doc.width, h:doc.height });
-    }
-    slide.addText(`${doc.name} - ${lang} 双语审校版`, { x:doc.width + gap, y:0.06, w:reviewWidth - 0.1, h:0.24, fontSize:12, bold:true, color:'1E3A8A' });
-    slide.addText(`Slide ${slideData.index}`, { x:doc.width + gap, y:0.32, w:reviewWidth - 0.1, h:0.18, fontSize:9, color:'64748B' });
-    slide.addShape(pptx.ShapeType.rect, { x:doc.width + gap / 2, y:0.05, w:0.02, h:Math.max(0.1, doc.height - 0.1), line:{ color:'D6DBE7', transparency:100 }, fill:{ color:'D6DBE7' } });
-    slideData.images.forEach(image => {
-      slide.addImage({ data:image.data, x:image.x, y:image.y, w:image.w, h:image.h });
-    });
-    slideData.shapes.forEach(shape => {
-      slide.addText(shape.text, { x:shape.x, y:shape.y, w:shape.w, h:shape.h, fontSize:Math.max(10, Math.min(shape.fontSize, 22)), color:'111827', margin:0.04, fit:'shrink' });
-    });
-    const pairWidth = (reviewWidth - 0.18) / 2;
-    slideData.shapes.forEach(shape => {
-      const result = results.get(shape.id) || { text:'', error:'未生成结果', warning:'' };
-      const y = Math.min(Math.max(shape.y, 0.58), Math.max(0.58, doc.height - Math.max(0.4, shape.h)));
-      const h = Math.max(shape.h, 0.42);
-      slide.addText(shape.text, { x:doc.width + gap, y, w:pairWidth, h, fontSize:Math.max(9, Math.min(shape.fontSize, 18)), color:'0F172A', margin:0.05, fill:{ color:'F8FAFC' }, line:{ color:'CBD5E1' }, fit:'shrink' });
-      slide.addText(result.error ? `[ERROR]\n${result.error}` : (result.text || ''), { x:doc.width + gap + pairWidth + 0.06, y, w:pairWidth, h, fontSize:Math.max(9, Math.min(shape.fontSize, 18)), color:result.error ? '991B1B' : '111827', margin:0.05, fill:{ color:result.error ? 'FEE2E2' : 'FEF3C7' }, line:{ color:result.error ? 'FCA5A5' : 'F59E0B' }, fit:'shrink' });
-    });
+function nextNumericId(values, fallback) {
+  const nums = values.map(value => Number(String(value).replace(/^\D+/, ''))).filter(Number.isFinite);
+  return (nums.length ? Math.max(...nums) : fallback) + 1;
+}
+function removeChildrenByLocalNames(parent, names) {
+  Array.from(parent.children).forEach(child => {
+    if (names.includes(child.localName)) parent.removeChild(child);
   });
-  return await pptx.write({ outputType:'blob' });
+}
+function ensureTextRun(paragraph, xmlDoc) {
+  let run = Array.from(paragraph.children).find(child => child.localName === 'r');
+  if (run) return run;
+  run = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:r');
+  run.appendChild(xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:rPr'));
+  run.appendChild(xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:t'));
+  const endPara = Array.from(paragraph.children).find(child => child.localName === 'endParaRPr');
+  if (endPara) paragraph.insertBefore(run, endPara);
+  else paragraph.appendChild(run);
+  return run;
+}
+function applyBlackTextStyle(node, xmlDoc) {
+  if (!node) return;
+  removeChildrenByLocalNames(node, ['solidFill', 'gradFill', 'blipFill', 'pattFill', 'noFill']);
+  const fill = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:solidFill');
+  const color = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:srgbClr');
+  color.setAttribute('val', '000000');
+  fill.appendChild(color);
+  node.appendChild(fill);
+}
+function updateTranslatedShape(sp, translatedText, xmlDoc) {
+  const txBody = firstLocalName(sp, 'txBody');
+  if (!txBody) return;
+  const bodyPr = firstLocalName(txBody, 'bodyPr');
+  if (bodyPr) bodyPr.setAttribute('wrap', 'square');
+  const paragraphs = Array.from(txBody.children).filter(child => child.localName === 'p');
+  let paragraph = paragraphs[0];
+  if (!paragraph) {
+    paragraph = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:p');
+    txBody.appendChild(paragraph);
+  }
+  paragraphs.slice(1).forEach(p => txBody.removeChild(p));
+  const run = ensureTextRun(paragraph, xmlDoc);
+  Array.from(paragraph.children).forEach(child => {
+    if (child !== run && child.localName !== 'endParaRPr') paragraph.removeChild(child);
+  });
+  const rPr = firstLocalName(run, 'rPr');
+  applyBlackTextStyle(rPr, xmlDoc);
+  let textNode = firstLocalName(run, 't');
+  if (!textNode) {
+    textNode = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:t');
+    run.appendChild(textNode);
+  }
+  textNode.textContent = String(translatedText || '').replace(/\s*\n+\s*/g, ' ').trim();
+  applyBlackTextStyle(firstLocalName(paragraph, 'endParaRPr'), xmlDoc);
+
+  let spPr = firstLocalName(sp, 'spPr');
+  if (!spPr) {
+    spPr = xmlDoc.createElementNS('http://schemas.openxmlformats.org/presentationml/2006/main', 'p:spPr');
+    const txBodyNode = firstLocalName(sp, 'txBody');
+    if (txBodyNode) sp.insertBefore(spPr, txBodyNode);
+    else sp.appendChild(spPr);
+  }
+  removeChildrenByLocalNames(spPr, ['solidFill', 'gradFill', 'blipFill', 'pattFill', 'noFill']);
+  const fill = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:solidFill');
+  const color = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:srgbClr');
+  color.setAttribute('val', 'FFF200');
+  fill.appendChild(color);
+  spPr.appendChild(fill);
+
+  localNameNodes(txBody, 'rPr').forEach(node => applyBlackTextStyle(node, xmlDoc));
+  localNameNodes(txBody, 'defRPr').forEach(node => applyBlackTextStyle(node, xmlDoc));
+  localNameNodes(txBody, 'endParaRPr').forEach(node => applyBlackTextStyle(node, xmlDoc));
+}
+async function buildTranslatedPptx(doc, lang, results) {
+  const zip = await window.JSZip.loadAsync(doc.sourceBuffer);
+  const presentationPath = 'ppt/presentation.xml';
+  const presentationRelPath = 'ppt/_rels/presentation.xml.rels';
+  const contentTypesPath = '[Content_Types].xml';
+  const presentationXml = xmlFrom(await zip.file(presentationPath).async('text'));
+  const presentationRelXml = xmlFrom(await zip.file(presentationRelPath).async('text'));
+  const contentTypesXml = xmlFrom(await zip.file(contentTypesPath).async('text'));
+  const relRoot = presentationRelXml.documentElement;
+  const contentRoot = contentTypesXml.documentElement;
+  const sldIdLst = firstLocalName(presentationXml, 'sldIdLst');
+  const slideRels = localNameNodes(relRoot, 'Relationship').filter(rel => /\/slide$/.test(attrAny(rel, ['Type'])));
+  const originalSlideIdEntries = Array.from(sldIdLst.children).filter(node => node.localName === 'sldId');
+  const originalSlidePaths = Object.keys(zip.files).filter(name => /^ppt\/slides\/slide\d+\.xml$/i.test(name));
+  let nextSlideIndex = Math.max(...originalSlidePaths.map(path => Number(path.match(/slide(\d+)\.xml/i)[1])), 0);
+  let nextRelId = nextNumericId(localNameNodes(relRoot, 'Relationship').map(rel => attrAny(rel, ['Id'])), 0);
+  let nextSlideId = nextNumericId(originalSlideIdEntries.map(node => attrAny(node, ['id'])), 255);
+  const slideMap = new Map(doc.slides.map(slide => [slide.slidePath, slide]));
+
+  const newOrder = [];
+  for (const originalEntry of originalSlideIdEntries) {
+    const relId = attrAny(originalEntry, ['r:id', 'id']);
+    const rel = slideRels.find(item => attrAny(item, ['Id']) === relId);
+    const slidePath = rel ? resolveZipPath(presentationRelPath, attrAny(rel, ['Target'])) : '';
+    newOrder.push(originalEntry);
+    const slideData = slideMap.get(slidePath);
+    if (!slideData) continue;
+    const newSlideIndex = ++nextSlideIndex;
+    const newSlidePath = `ppt/slides/slide${newSlideIndex}.xml`;
+    const newSlideRelPath = `ppt/slides/_rels/slide${newSlideIndex}.xml.rels`;
+    const translatedXml = xmlFrom(await zip.file(slideData.slidePath).async('text'));
+    localNameNodes(translatedXml, 'sp').forEach(sp => {
+      const idNode = firstLocalName(sp, 'cNvPr');
+      const shapeNodeId = attrAny(idNode, ['id']);
+      if (!shapeNodeId) return;
+      const key = `slide-${slideData.index}-shape-${shapeNodeId}`;
+      const result = results.get(key);
+      if (!result || result.error || !result.text) return;
+      updateTranslatedShape(sp, result.text, translatedXml);
+    });
+    zip.file(newSlidePath, new XMLSerializer().serializeToString(translatedXml));
+    if (zip.file(slideData.relPath)) {
+      const relXml = xmlFrom(await zip.file(slideData.relPath).async('text'));
+      localNameNodes(relXml, 'Relationship').forEach(relNode => {
+        const type = attrAny(relNode, ['Type']);
+        if (/\/notesSlide$/.test(type)) relNode.parentNode.removeChild(relNode);
+      });
+      zip.file(newSlideRelPath, new XMLSerializer().serializeToString(relXml));
+    }
+    const override = contentTypesXml.createElementNS('http://schemas.openxmlformats.org/package/2006/content-types', 'Override');
+    override.setAttribute('PartName', '/' + newSlidePath);
+    override.setAttribute('ContentType', 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml');
+    contentRoot.appendChild(override);
+
+    const relationship = presentationRelXml.createElementNS('http://schemas.openxmlformats.org/package/2006/relationships', 'Relationship');
+    const newRelId = `rId${nextRelId++}`;
+    relationship.setAttribute('Id', newRelId);
+    relationship.setAttribute('Type', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide');
+    relationship.setAttribute('Target', `slides/slide${newSlideIndex}.xml`);
+    relRoot.appendChild(relationship);
+
+    const newSldId = presentationXml.createElementNS('http://schemas.openxmlformats.org/presentationml/2006/main', 'p:sldId');
+    newSldId.setAttribute('id', String(nextSlideId++));
+    newSldId.setAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'r:id', newRelId);
+    newOrder.push(newSldId);
+  }
+
+  Array.from(sldIdLst.children).forEach(child => sldIdLst.removeChild(child));
+  newOrder.forEach(node => sldIdLst.appendChild(node));
+  zip.file(presentationPath, new XMLSerializer().serializeToString(presentationXml));
+  zip.file(presentationRelPath, new XMLSerializer().serializeToString(presentationRelXml));
+  zip.file(contentTypesPath, new XMLSerializer().serializeToString(contentTypesXml));
+  return await zip.generateAsync({ type:'blob' });
 }
 function renderDocumentResult(result) {
   $('documentTableWrap').classList.remove('hidden');
@@ -966,8 +1080,8 @@ async function runDocumentTranslate() {
             renderDocumentResult({ name:item.name, lang, kind:'DOCX', status:'ok', message:`${doc.pages.length} 页双语 DOCX`, blob, downloadName:`${fileStem(item.name)}_${lang}.docx` });
           }
         } else {
-          const blob = await buildReviewPptx(doc, lang, results);
-          renderDocumentResult({ name:item.name, lang, kind:'PPTX 审校版', status:'ok', message:`${doc.slides.length} 页双语审校版 PPTX`, blob, downloadName:`${fileStem(item.name)}_${lang}_review.pptx` });
+          const blob = await buildTranslatedPptx(doc, lang, results);
+          renderDocumentResult({ name:item.name, lang, kind:'PPTX 翻译版', status:'ok', message:`保留 ${doc.slides.length} 页原稿，并在每页后新增 1 页高亮译文页`, blob, downloadName:`${fileStem(item.name)}_${lang}_translated.pptx` });
         }
       } catch (error) {
         state.errors++;
