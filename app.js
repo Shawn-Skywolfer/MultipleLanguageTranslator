@@ -124,13 +124,20 @@ function unsupportedParam(raw, param) {
   return s.includes('unsupported parameter') && s.includes(param.toLowerCase());
 }
 async function proxyPost(url, payload) {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify(payload),
-  });
-  const raw = await res.text();
-  return { res, raw };
+  if (window.location.protocol === 'file:') {
+    throw new Error('当前版本不能通过直接双击 HTML 文件运行。请部署到 Vercel，或使用 `vercel dev` 这类支持 `/api/*` 的本地环境。');
+  }
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const raw = await res.text();
+    return { res, raw };
+  } catch (error) {
+    throw new Error(`无法访问站内接口 ${url}。如果你当前是直接打开 HTML 文件，或使用了不支持 Serverless Functions 的静态服务器，就会出现这个问题。请部署到 Vercel，或使用 \`vercel dev\` 本地运行。原始错误：${error.message || error}`);
+  }
 }
 async function postChatCompletion(body, logId) {
   const config = getModelConfig();
@@ -616,6 +623,62 @@ function resolveZipPath(basePath, target) {
   });
   return baseParts.join('/');
 }
+async function parseRelationshipMap(zip, relPath) {
+  const relMap = {};
+  if (!zip.file(relPath)) return relMap;
+  const relXml = xmlFrom(await zip.file(relPath).async('text'));
+  localNameNodes(relXml, 'Relationship').forEach(rel => {
+    const id = attrAny(rel, ['Id']);
+    const target = attrAny(rel, ['Target']);
+    if (id && target) relMap[id] = resolveZipPath(relPath, target);
+  });
+  return relMap;
+}
+function pickFirstPath(relMap, matcher) {
+  return Object.values(relMap || {}).find(path => matcher.test(path)) || '';
+}
+function findColorHex(node) {
+  if (!node) return '';
+  const srgb = firstLocalName(node, 'srgbClr');
+  if (srgb) return String(attrAny(srgb, ['val'])).toUpperCase();
+  return '';
+}
+async function extractBackgroundSpec(zip, xmlDoc, relMap) {
+  const bg = firstLocalName(xmlDoc, 'bg');
+  if (!bg) return null;
+  const bgPr = firstLocalName(bg, 'bgPr') || bg;
+  const blipFill = firstLocalName(bgPr, 'blipFill');
+  if (blipFill) {
+    const blip = firstLocalName(blipFill, 'blip');
+    const rid = attrAny(blip, ['r:embed', 'embed']);
+    const targetPath = relMap[rid];
+    if (targetPath) {
+      const data = await zipFileToDataUrl(zip, targetPath);
+      if (data) return { type:'image', data };
+    }
+  }
+  const solidFill = firstLocalName(bgPr, 'solidFill');
+  const color = findColorHex(solidFill);
+  if (color) return { type:'color', color };
+  return null;
+}
+async function resolveSlideBackground(zip, slidePath, slideXml, slideRelMap) {
+  const slideBg = await extractBackgroundSpec(zip, slideXml, slideRelMap);
+  if (slideBg) return slideBg;
+  const layoutPath = pickFirstPath(slideRelMap, /ppt\/slideLayouts\/slideLayout\d+\.xml$/i);
+  if (!layoutPath || !zip.file(layoutPath)) return null;
+  const layoutXml = xmlFrom(await zip.file(layoutPath).async('text'));
+  const layoutRelPath = layoutPath.replace('ppt/slideLayouts/', 'ppt/slideLayouts/_rels/') + '.rels';
+  const layoutRelMap = await parseRelationshipMap(zip, layoutRelPath);
+  const layoutBg = await extractBackgroundSpec(zip, layoutXml, layoutRelMap);
+  if (layoutBg) return layoutBg;
+  const masterPath = pickFirstPath(layoutRelMap, /ppt\/slideMasters\/slideMaster\d+\.xml$/i);
+  if (!masterPath || !zip.file(masterPath)) return null;
+  const masterXml = xmlFrom(await zip.file(masterPath).async('text'));
+  const masterRelPath = masterPath.replace('ppt/slideMasters/', 'ppt/slideMasters/_rels/') + '.rels';
+  const masterRelMap = await parseRelationshipMap(zip, masterRelPath);
+  return await extractBackgroundSpec(zip, masterXml, masterRelMap);
+}
 function getMimeType(path) {
   const lower = path.toLowerCase();
   if (lower.endsWith('.png')) return 'image/png';
@@ -648,15 +711,8 @@ async function extractPptxDocument(file) {
     const slideIndex = Number(slidePath.match(/slide(\d+)/i)[1]);
     const slideXml = xmlFrom(await zip.file(slidePath).async('text'));
     const relPath = slidePath.replace('ppt/slides/', 'ppt/slides/_rels/') + '.rels';
-    const relMap = {};
-    if (zip.file(relPath)) {
-      const relXml = xmlFrom(await zip.file(relPath).async('text'));
-      localNameNodes(relXml, 'Relationship').forEach(rel => {
-        const id = attrAny(rel, ['Id']);
-        const target = attrAny(rel, ['Target']);
-        if (id && target) relMap[id] = resolveZipPath(relPath, target);
-      });
-    }
+    const relMap = await parseRelationshipMap(zip, relPath);
+    const background = await resolveSlideBackground(zip, slidePath, slideXml, relMap);
     const shapes = [];
     localNameNodes(slideXml, 'sp').forEach(sp => {
       const txBody = firstLocalName(sp, 'txBody');
@@ -699,7 +755,7 @@ async function extractPptxDocument(file) {
         h: Math.max(0.5, emuToInch(attrAny(ext, ['cy']))),
       });
     }
-    slides.push({ index:slideIndex, shapes, images });
+    slides.push({ index:slideIndex, shapes, images, background });
   }
   log('documentLog', `PPTX 解析完成：${file.name}，共 ${slides.length} 页。`);
   return { type:'pptx', name:file.name, width, height, slides };
@@ -803,7 +859,14 @@ async function buildReviewPptx(doc, lang, results) {
   pptx.layout = 'DOC_REVIEW';
   doc.slides.forEach(slideData => {
     const slide = pptx.addSlide();
-    slide.background = { color:'FFFFFF' };
+    if (slideData.background?.type === 'color' && slideData.background.color) {
+      slide.background = { color: slideData.background.color };
+    } else {
+      slide.background = { color:'FFFFFF' };
+    }
+    if (slideData.background?.type === 'image' && slideData.background.data) {
+      slide.addImage({ data: slideData.background.data, x:0, y:0, w:doc.width, h:doc.height });
+    }
     slide.addText(`${doc.name} - ${lang} 双语审校版`, { x:doc.width + gap, y:0.06, w:reviewWidth - 0.1, h:0.24, fontSize:12, bold:true, color:'1E3A8A' });
     slide.addText(`Slide ${slideData.index}`, { x:doc.width + gap, y:0.32, w:reviewWidth - 0.1, h:0.18, fontSize:9, color:'64748B' });
     slide.addShape(pptx.ShapeType.rect, { x:doc.width + gap / 2, y:0.05, w:0.02, h:Math.max(0.1, doc.height - 0.1), line:{ color:'D6DBE7', transparency:100 }, fill:{ color:'D6DBE7' } });
