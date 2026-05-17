@@ -7,6 +7,7 @@ const PROVIDER_PRESETS = [
   {name:'智谱 BigModel', baseUrl:'https://open.bigmodel.cn/api/paas/v4', model:'glm-5.1', models:['glm-5.1','glm-5-turbo','glm-5','glm-4.7','glm-4.7-flash','glm-4.7-flashx','glm-4.6','glm-4.5-air','glm-4.5-airx','glm-4.5-flash','glm-4-flash-250414','glm-4-flashx-250414']},
   {name:'Kimi Code', baseUrl:'https://api.kimi.com/coding/v1', model:'kimi-for-coding', models:['kimi-for-coding']}
 ];
+const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 const DEFAULT_LANGS = ['German','Spanish','French','Bulgarian','Czech','Greek','Italian','Dutch','Polish','Romanian','Turkish','Hungarian','Slovakian','Portuguese','Croatian','Danish','Swedish','Ukrainian'];
 const $ = id => document.getElementById(id);
 const state = {
@@ -610,6 +611,10 @@ function attrAny(node, names) {
   }
   return '';
 }
+function relAttr(node, localName) {
+  if (!node) return '';
+  return node.getAttributeNS(REL_NS, localName) || node.getAttribute('r:' + localName) || '';
+}
 function emuToInch(value) {
   return Number(value || 0) / 914400;
 }
@@ -650,7 +655,7 @@ async function extractBackgroundSpec(zip, xmlDoc, relMap) {
   const blipFill = firstLocalName(bgPr, 'blipFill');
   if (blipFill) {
     const blip = firstLocalName(blipFill, 'blip');
-    const rid = attrAny(blip, ['r:embed', 'embed']);
+    const rid = relAttr(blip, 'embed') || attrAny(blip, ['embed']);
     const targetPath = relMap[rid];
     if (targetPath) {
       const data = await zipFileToDataUrl(zip, targetPath);
@@ -742,7 +747,7 @@ async function extractPptxDocument(file) {
     const images = [];
     for (const pic of localNameNodes(slideXml, 'pic')) {
       const blip = firstLocalName(pic, 'blip');
-      const rid = attrAny(blip, ['r:embed','embed']);
+      const rid = relAttr(blip, 'embed') || attrAny(blip, ['embed']);
       const targetPath = relMap[rid];
       if (!targetPath) continue;
       const xfrm = firstLocalName(pic, 'xfrm') || firstLocalName(firstLocalName(pic, 'spPr') || pic, 'xfrm');
@@ -948,7 +953,7 @@ async function buildTranslatedPptx(doc, lang, results) {
 
   const newOrder = [];
   for (const originalEntry of originalSlideIdEntries) {
-    const relId = attrAny(originalEntry, ['r:id', 'id']);
+    const relId = relAttr(originalEntry, 'id');
     const rel = slideRels.find(item => attrAny(item, ['Id']) === relId);
     const slidePath = rel ? resolveZipPath(presentationRelPath, attrAny(rel, ['Target'])) : '';
     newOrder.push(originalEntry);
@@ -990,7 +995,7 @@ async function buildTranslatedPptx(doc, lang, results) {
 
     const newSldId = presentationXml.createElementNS('http://schemas.openxmlformats.org/presentationml/2006/main', 'p:sldId');
     newSldId.setAttribute('id', String(nextSlideId++));
-    newSldId.setAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'r:id', newRelId);
+    newSldId.setAttributeNS(REL_NS, 'r:id', newRelId);
     newOrder.push(newSldId);
   }
 
