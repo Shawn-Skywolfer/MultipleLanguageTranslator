@@ -124,13 +124,20 @@ function unsupportedParam(raw, param) {
   return s.includes('unsupported parameter') && s.includes(param.toLowerCase());
 }
 async function proxyPost(url, payload) {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify(payload),
-  });
-  const raw = await res.text();
-  return { res, raw };
+  if (window.location.protocol === 'file:') {
+    throw new Error('当前版本不能通过直接双击 HTML 文件运行。请部署到 Vercel，或使用 `vercel dev` 这类支持 `/api/*` 的本地环境。');
+  }
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const raw = await res.text();
+    return { res, raw };
+  } catch (error) {
+    throw new Error(`无法访问站内接口 ${url}。如果你当前是直接打开 HTML 文件，或使用了不支持 Serverless Functions 的静态服务器，就会出现这个问题。请部署到 Vercel，或使用 \`vercel dev\` 本地运行。原始错误：${error.message || error}`);
+  }
 }
 async function postChatCompletion(body, logId) {
   const config = getModelConfig();

@@ -44,17 +44,27 @@
 
 ## 运行方式
 
-### 本地预览
+### 本地完整调试
+
+当前版本依赖 `api/chat-completions.js` 和 `api/models.js` 两个 Vercel Functions，因此不再适合通过“直接双击 `index.html`”或仅用 `python -m http.server` 这类纯静态服务器进行完整测试。
+
+如需本地完整调试，推荐使用：
+
+```bash
+npx vercel dev
+```
+
+然后访问终端输出的本地地址。
+
+### 仅静态页面预览
+
+如果你只是想快速看页面布局，不测试模型调用，也可以使用：
 
 ```bash
 python3 -m http.server 8000
 ```
 
-然后访问：
-
-```text
-http://localhost:8000
-```
+但这种方式下，`/api/*` 代理接口不可用，刷新模型列表和连通测试会失败。
 
 ### Vercel 一键部署
 
