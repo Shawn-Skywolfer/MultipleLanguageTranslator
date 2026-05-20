@@ -865,7 +865,10 @@ function emuToInch(value) {
   return Number(value || 0) / 914400;
 }
 function resolveZipPath(basePath, target) {
-  const baseParts = basePath.split('/');
+  const normalizedBasePath = /\/_rels\/.+\.rels$/i.test(basePath)
+    ? basePath.replace('/_rels/', '/').replace(/\.rels$/i, '')
+    : basePath;
+  const baseParts = normalizedBasePath.split('/');
   baseParts.pop();
   target.split('/').forEach(part => {
     if (!part || part === '.') return;
