@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Digital Power 文档翻译工作台</title>
+  <title>Digital Power 多格式翻译工作台</title>
   <style>
     :root{--bg:#f5f7fb;--card:#fff;--ink:#111827;--muted:#64748b;--line:#e5e7eb;--brand:#2563eb;--brand2:#1d4ed8;--ok:#059669;--warn:#d97706;--bad:#dc2626;--blue:#eff6ff;--green:#ecfdf5;--yellow:#fffbeb;--shadow:0 16px 38px rgba(15,23,42,.08);--r:18px}
     *{box-sizing:border-box} body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Arial,sans-serif;color:var(--ink);background:radial-gradient(circle at 15% 0%,rgba(37,99,235,.15),transparent 35%),linear-gradient(180deg,#fff 0%,var(--bg) 44%,#eef2ff 100%);min-height:100vh}
@@ -23,12 +23,12 @@
 <main class="wrap">
   <section class="hero">
     <div class="card intro">
-      <h1>Digital Power 文档翻译工作台</h1>
-      <p class="muted">第一阶段支持文字型 PDF 与图片型 PDF，输出每个目标语言独立下载的双语 Markdown / DOCX；第二阶段支持 PPTX，输出“原始内容 + 原文 / 译文并排审校栏”的双语审校版 PPTX。模型调用统一走站内 API 代理，适合 Vercel 一键部署。</p>
-      <div style="margin-top:12px"><span class="pill">PDF 文本抽取</span><span class="pill">OCR 回退</span><span class="pill">双语 Markdown / DOCX</span><span class="pill">PPTX 审校版</span><span class="pill">Vercel 友好</span></div>
+      <h1>Digital Power 多格式翻译工作台</h1>
+      <p class="muted">统一处理 `CSV`、`PDF` 和 `PPTX`。CSV 继续保留原有批量翻译能力；PDF 支持文字抽取与 OCR 回退并导出双语 Markdown / DOCX；PPTX 保留原始页，并在每页后新增一页对应的高亮译文页。模型调用统一走站内 API 代理，适合 Vercel 一键部署。</p>
+      <div style="margin-top:12px"><span class="pill">CSV 批量翻译</span><span class="pill">PDF 文本抽取 + OCR</span><span class="pill">双语 Markdown / DOCX</span><span class="pill">PPTX 逐页译文页</span><span class="pill">Vercel 友好</span></div>
     </div>
     <div class="card stats">
-      <div class="stat"><strong id="statFiles">0</strong><span class="muted">已上传文档</span></div>
+      <div class="stat"><strong id="statFiles">0</strong><span class="muted">已上传文件</span></div>
       <div class="stat"><strong id="statDone">0</strong><span class="muted">已生成输出</span></div>
       <div class="stat"><strong id="statErrors">0</strong><span class="muted">失败 / 警告</span></div>
     </div>
@@ -36,7 +36,8 @@
 
   <nav class="tabs">
     <button class="tab active" data-tab="model">1. 模型配置</button>
-    <button class="tab" data-tab="document">2. 文档翻译</button>
+    <button class="tab" data-tab="translate">2. CSV 批量翻译</button>
+    <button class="tab" data-tab="document">3. 文档翻译</button>
   </nav>
 
   <section id="tab-model" class="section active">
@@ -65,7 +66,7 @@
         <div class="small">只填充 Provider 名称、Base URL、模型 ID 和候选模型列表，不覆盖 API Key。</div>
       </div>
       <div class="field"><label><input type="checkbox" id="saveKey" style="width:auto;height:auto" /> 保存 API Key 到本机浏览器 localStorage</label></div>
-      <div class="notice green">当前实现默认走站内代理，更适合直接部署到 Vercel。部署后只需填写你的 Provider 参数即可开始文档翻译。</div>
+      <div class="notice green">当前实现默认走站内代理，更适合直接部署到 Vercel。部署后只需填写你的 Provider 参数即可开始翻译。</div>
       <div class="grid">
         <div>
           <div class="field"><label>模型关键字筛选</label><input id="modelFilter" placeholder="输入 gpt / claude / gemini / deepseek / qwen 等" /></div>
@@ -79,11 +80,52 @@
     </div>
   </section>
 
+  <section id="tab-translate" class="section">
+    <div class="grid">
+      <div class="card panel">
+        <h2>上传 CSV</h2>
+        <p class="muted">上传一个或多个 CSV 文件，自动识别表头并按共享的目标语言、术语规则和标准翻译库执行批量翻译。</p>
+        <div class="button-row"><label class="file-label secondary" for="translateFiles">上传 CSV</label><button class="ghost" id="clearTranslateBtn">清空</button></div>
+        <input id="translateFiles" type="file" accept=".csv,text/csv" multiple />
+        <div class="dropzone" id="translateDrop">也可以把 CSV 文件拖到这里</div>
+        <div class="notice blue" id="translateFileInfo">尚未上传 CSV。</div>
+      </div>
+      <div class="card panel">
+        <h2>CSV 翻译参数</h2>
+        <div class="grid">
+          <div class="field"><label>原文列</label><select id="sourceColumn"><option value="">先上传 CSV</option></select></div>
+          <div class="field"><label>源语言</label><select id="sourceLang"><option>English</option><option>Chinese</option><option>Auto</option></select></div>
+        </div>
+        <div class="grid">
+          <div class="field"><label>国家 / 地区（可选，全局）</label><input id="countryGlobal" placeholder="例如 Germany / Spain / France" /></div>
+          <div class="field"><label>国家 / 地区列（可选，优先于全局）</label><select id="countryColumn"><option value="">不使用列</option></select></div>
+        </div>
+        <div class="grid">
+          <div class="field"><label>工作流模式</label><select id="workflowMode"><option value="full">完整 DSL：初译 + 建议 + 改译</option><option value="fast">快速模式：直接最终翻译</option></select></div>
+          <div class="field"><label>输出格式</label><select id="outputMode"><option value="wide">宽表：每个目标语言新增一列</option><option value="long">长表：每个目标语言生成一行</option></select></div>
+        </div>
+        <div class="grid">
+          <div class="field"><label>并发数</label><select id="concurrency"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select></div>
+          <div class="field"><label>失败重试次数</label><select id="retries"><option>0</option><option selected>1</option><option>2</option><option>3</option></select></div>
+        </div>
+      </div>
+    </div>
+    <div class="button-row" style="margin-top:18px"><button class="primary" id="runTranslateBtn">开始批量翻译</button><button class="danger" id="cancelTranslateBtn" disabled>停止</button></div>
+    <div class="progress"><div class="bar" id="translateBar"></div></div>
+    <div class="mini" id="translateProgressText">尚未开始。</div>
+    <div class="card panel" style="margin-top:18px">
+      <h2>CSV 翻译结果</h2>
+      <div id="translateTableWrap" class="hidden"><table><thead><tr><th>文件</th><th>状态</th><th>任务数</th><th>说明</th><th>下载</th></tr></thead><tbody id="translateResultBody"></tbody></table></div>
+      <div class="notice yellow" id="translateEmpty">还没有 CSV 翻译结果。</div>
+      <div class="log" id="translateLog">准备就绪。</div>
+    </div>
+  </section>
+
   <section id="tab-document" class="section">
     <div class="grid">
       <div class="card panel">
         <h2>上传文档</h2>
-        <p class="muted">支持 `PDF` 和 `PPTX`。PDF 会优先做文字抽取，文本不足时自动回退到 OCR；PPTX 会提取文本框与图片，输出双语审校版。</p>
+        <p class="muted">支持 `PDF` 和 `PPTX`。PDF 会优先做文字抽取，文本不足时自动回退到 OCR；PPTX 会保留原始页，并在每页后新增对应的高亮译文页。</p>
         <div class="button-row"><label class="file-label secondary" for="documentFiles">上传 PDF / PPTX</label><button class="ghost" id="clearDocumentBtn">清空</button></div>
         <input id="documentFiles" type="file" accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation" multiple />
         <div class="dropzone" id="documentDrop">也可以把 PDF 或 PPTX 文件拖到这里</div>
@@ -106,44 +148,42 @@
         <div class="notice yellow">PPTX 会输出“原始页保留 + 每页后新增 1 页译文页”的翻译版 PPTX。译文页会直接复用原始幻灯片中的图片、图形元素和文本框位置，只替换对应文本框文字，并用黄色底色、黑色文字高亮。</div>
       </div>
     </div>
-
-    <div class="card panel" style="margin-top:18px">
-      <h2>共享翻译规则与目标语言</h2>
-      <div class="grid">
-        <div>
-          <h3>标准翻译库（可选）</h3>
-          <div class="button-row"><label class="file-label secondary" for="translationMemoryFiles">上传标准翻译 CSV</label><button class="ghost" id="clearTranslationMemoryBtn">清空标准库</button></div>
-          <input id="translationMemoryFiles" type="file" accept=".csv,text/csv" multiple />
-          <div class="field"><label>命中标准译文时</label><select id="translationMemoryMode"><option value="direct" selected>直接使用标准译文（不调用模型）</option><option value="review">仍调用完整 DSL 评审</option></select></div>
-          <div class="notice blue" id="translationMemoryInfo">尚未上传标准翻译库。支持窄表：source/source_text/原文 + target_lang/language + translation/target_text/标准译文；也支持宽表：source + German/French/Chinese 等语言列。</div>
-        </div>
-        <div>
-          <h3>术语保护与自定义规则（可选）</h3>
-          <div class="grid">
-            <div class="field"><label>受保护术语（一行一个）</label><textarea id="protectedTerms" placeholder="例如：&#10;Digital Power&#10;ESS&#10;Smart PV&#10;SUN2000-10KTL-M1"></textarea><div class="mini">命中源文时，要求译文保留完全一致的大小写、空格、连字符、型号和商标。</div></div>
-            <div class="field"><label>自定义规则</label><textarea id="customRules" placeholder="例如：&#10;Digital Power 不翻译&#10;ESS 保持英文缩写&#10;产品型号不得增删字符"></textarea><div class="mini">支持自由文本，会原样传入模型。</div></div>
-          </div>
-          <div class="button-row"><label class="file-label secondary" for="termsCsvFile">上传术语 CSV</label><button class="ghost" id="clearRulesBtn" type="button">清空规则</button></div>
-          <input id="termsCsvFile" type="file" accept=".csv,text/csv" />
-          <div class="notice blue" id="termsCsvInfo">可选上传术语 CSV：优先读取 term/protected_term/术语/词条列；未找到时读取第一列非空值并追加到受保护术语。</div>
-        </div>
-      </div>
-      <h3>目标翻译语言多选</h3>
-      <div class="button-row"><button class="secondary" id="selectAllLangBtn">全选</button><button class="ghost" id="clearLangBtn">清空语言</button><button class="ghost" id="selectEuroBtn">选择欧洲常用语言</button></div>
-      <div class="field"><label>添加自定义语言</label><div style="display:flex;gap:8px"><input id="customLang" placeholder="例如 Japanese / Arabic / Swedish" /><button class="secondary" id="addLangBtn" style="white-space:nowrap">添加</button></div></div>
-      <div class="language-box" id="languageBox"></div>
-    </div>
-
     <div class="button-row" style="margin-top:18px"><button class="primary" id="runDocumentBtn">开始文档翻译</button><button class="danger" id="cancelDocumentBtn" disabled>停止</button></div>
     <div class="progress"><div class="bar" id="documentBar"></div></div>
     <div class="mini" id="documentProgressText">尚未开始。</div>
-
     <div class="card panel" style="margin-top:18px">
       <h2>文档翻译结果</h2>
       <div id="documentTableWrap" class="hidden"><table><thead><tr><th>文件</th><th>语言</th><th>类型</th><th>状态</th><th>说明</th><th>下载</th></tr></thead><tbody id="documentResultBody"></tbody></table></div>
       <div class="notice yellow" id="documentEmpty">还没有文档翻译结果。</div>
       <div class="log" id="documentLog">准备就绪。</div>
     </div>
+  </section>
+
+  <section class="card panel" style="margin-top:18px">
+    <h2>共享翻译规则与目标语言</h2>
+    <div class="grid">
+      <div>
+        <h3>标准翻译库（可选）</h3>
+        <div class="button-row"><label class="file-label secondary" for="translationMemoryFiles">上传标准翻译 CSV</label><button class="ghost" id="clearTranslationMemoryBtn">清空标准库</button></div>
+        <input id="translationMemoryFiles" type="file" accept=".csv,text/csv" multiple />
+        <div class="field"><label>命中标准译文时</label><select id="translationMemoryMode"><option value="direct" selected>直接使用标准译文（不调用模型）</option><option value="review">仍调用完整 DSL 评审</option></select></div>
+        <div class="notice blue" id="translationMemoryInfo">尚未上传标准翻译库。支持窄表：source/source_text/原文 + target_lang/language + translation/target_text/标准译文；也支持宽表：source + German/French/Chinese 等语言列。</div>
+      </div>
+      <div>
+        <h3>术语保护与自定义规则（可选）</h3>
+        <div class="grid">
+          <div class="field"><label>受保护术语（一行一个）</label><textarea id="protectedTerms" placeholder="例如：&#10;Digital Power&#10;ESS&#10;Smart PV&#10;SUN2000-10KTL-M1"></textarea><div class="mini">命中源文时，要求译文保留完全一致的大小写、空格、连字符、型号和商标。</div></div>
+          <div class="field"><label>自定义规则</label><textarea id="customRules" placeholder="例如：&#10;Digital Power 不翻译&#10;ESS 保持英文缩写&#10;产品型号不得增删字符"></textarea><div class="mini">支持自由文本，会原样传入模型。</div></div>
+        </div>
+        <div class="button-row"><label class="file-label secondary" for="termsCsvFile">上传术语 CSV</label><button class="ghost" id="clearRulesBtn" type="button">清空规则</button></div>
+        <input id="termsCsvFile" type="file" accept=".csv,text/csv" />
+        <div class="notice blue" id="termsCsvInfo">可选上传术语 CSV：优先读取 term/protected_term/术语/词条列；未找到时读取第一列非空值并追加到受保护术语。</div>
+      </div>
+    </div>
+    <h3>目标翻译语言多选</h3>
+    <div class="button-row"><button class="secondary" id="selectAllLangBtn">全选</button><button class="ghost" id="clearLangBtn">清空语言</button><button class="ghost" id="selectEuroBtn">选择欧洲常用语言</button></div>
+    <div class="field"><label>添加自定义语言</label><div style="display:flex;gap:8px"><input id="customLang" placeholder="例如 Japanese / Arabic / Swedish" /><button class="secondary" id="addLangBtn" style="white-space:nowrap">添加</button></div></div>
+    <div class="language-box" id="languageBox"></div>
   </section>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
