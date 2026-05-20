@@ -1128,14 +1128,41 @@ function ensureTextRun(paragraph, xmlDoc) {
   else paragraph.appendChild(run);
   return run;
 }
-function applyBlackTextStyle(node, xmlDoc) {
-  if (!node) return;
-  removeChildrenByLocalNames(node, ['solidFill', 'gradFill', 'blipFill', 'pattFill', 'noFill']);
-  const fill = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:solidFill');
-  const color = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:srgbClr');
-  color.setAttribute('val', '000000');
-  fill.appendChild(color);
-  node.appendChild(fill);
+function splitTextByWeights(text, weights) {
+  if (!weights.length) return [];
+  const normalizedWeights = weights.map(weight => Math.max(Number(weight) || 0, 0));
+  const totalWeight = normalizedWeights.reduce((sum, weight) => sum + weight, 0) || weights.length;
+  const source = String(text || '');
+  const parts = [];
+  let cursor = 0;
+  let cumulativeWeight = 0;
+  normalizedWeights.forEach((weight, index) => {
+    cumulativeWeight += weight || (totalWeight / weights.length);
+    const nextCursor = index === normalizedWeights.length - 1
+      ? source.length
+      : Math.max(cursor, Math.min(source.length, Math.round(source.length * cumulativeWeight / totalWeight)));
+    parts.push(source.slice(cursor, nextCursor));
+    cursor = nextCursor;
+  });
+  return parts;
+}
+function setTextNodeContent(textNode, value) {
+  const content = String(value || '');
+  textNode.textContent = content;
+  if (/^\s|\s$/.test(content) || /\s{2,}/.test(content)) textNode.setAttribute('xml:space', 'preserve');
+  else textNode.removeAttribute('xml:space');
+}
+function replaceParagraphTextPreservingRuns(paragraph, text, xmlDoc) {
+  const textNodes = localNameNodes(paragraph, 't');
+  if (!textNodes.length) {
+    const run = ensureTextRun(paragraph, xmlDoc);
+    const textNode = firstLocalName(run, 't') || xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:t');
+    if (!textNode.parentNode) run.appendChild(textNode);
+    setTextNodeContent(textNode, text);
+    return;
+  }
+  const parts = splitTextByWeights(text, textNodes.map(node => (node.textContent || '').length || 1));
+  textNodes.forEach((node, index) => setTextNodeContent(node, parts[index] || ''));
 }
 function updateTranslatedShape(sp, translatedText, xmlDoc) {
   const txBody = firstLocalName(sp, 'txBody');
@@ -1148,20 +1175,13 @@ function updateTranslatedShape(sp, translatedText, xmlDoc) {
     paragraph = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:p');
     txBody.appendChild(paragraph);
   }
-  paragraphs.slice(1).forEach(p => txBody.removeChild(p));
-  const run = ensureTextRun(paragraph, xmlDoc);
-  Array.from(paragraph.children).forEach(child => {
-    if (child !== run && child.localName !== 'endParaRPr') paragraph.removeChild(child);
-  });
-  const rPr = firstLocalName(run, 'rPr');
-  applyBlackTextStyle(rPr, xmlDoc);
-  let textNode = firstLocalName(run, 't');
-  if (!textNode) {
-    textNode = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:t');
-    run.appendChild(textNode);
-  }
-  textNode.textContent = String(translatedText || '').replace(/\s*\n+\s*/g, ' ').trim();
-  applyBlackTextStyle(firstLocalName(paragraph, 'endParaRPr'), xmlDoc);
+  const targetParagraphs = paragraphs.length ? paragraphs : [paragraph];
+  const normalizedText = String(translatedText || '').replace(/\s*\n+\s*/g, ' ').trim();
+  const paragraphParts = splitTextByWeights(normalizedText, targetParagraphs.map(item => {
+    const textNodes = localNameNodes(item, 't');
+    return textNodes.reduce((sum, node) => sum + ((node.textContent || '').length || 0), 0) || 1;
+  }));
+  targetParagraphs.forEach((item, index) => replaceParagraphTextPreservingRuns(item, paragraphParts[index] || '', xmlDoc));
 
   let spPr = firstLocalName(sp, 'spPr');
   if (!spPr) {
@@ -1176,10 +1196,6 @@ function updateTranslatedShape(sp, translatedText, xmlDoc) {
   color.setAttribute('val', 'FFF200');
   fill.appendChild(color);
   spPr.appendChild(fill);
-
-  localNameNodes(txBody, 'rPr').forEach(node => applyBlackTextStyle(node, xmlDoc));
-  localNameNodes(txBody, 'defRPr').forEach(node => applyBlackTextStyle(node, xmlDoc));
-  localNameNodes(txBody, 'endParaRPr').forEach(node => applyBlackTextStyle(node, xmlDoc));
 }
 async function buildTranslatedPptx(doc, lang, results) {
   const zip = await window.JSZip.loadAsync(doc.sourceBuffer);
