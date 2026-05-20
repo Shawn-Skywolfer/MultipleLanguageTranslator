@@ -7,11 +7,14 @@ const PROVIDER_PRESETS = [
   {name:'智谱 BigModel', baseUrl:'https://open.bigmodel.cn/api/paas/v4', model:'glm-5.1', models:['glm-5.1','glm-5-turbo','glm-5','glm-4.7','glm-4.7-flash','glm-4.7-flashx','glm-4.6','glm-4.5-air','glm-4.5-airx','glm-4.5-flash','glm-4-flash-250414','glm-4-flashx-250414']},
   {name:'Kimi Code', baseUrl:'https://api.kimi.com/coding/v1', model:'kimi-for-coding', models:['kimi-for-coding']}
 ];
+const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 const DEFAULT_LANGS = ['German','Spanish','French','Bulgarian','Czech','Greek','Italian','Dutch','Polish','Romanian','Turkish','Hungarian','Slovakian','Portuguese','Croatian','Danish','Swedish','Ukrainian'];
 const $ = id => document.getElementById(id);
 const state = {
   models: [...DEFAULT_MODELS],
+  translateFiles: [],
   documentFiles: [],
+  translateResults: [],
   translationMemory: new Map(),
   translationMemoryStats: {entries:0,files:0,rows:0,duplicates:0,hits:0,missesByLang:{}},
   done: 0,
@@ -34,8 +37,11 @@ function setLog(id, msg) {
   const el = $(id);
   if (el) el.textContent = msg;
 }
+function logShared(msg) {
+  ['translateLog', 'documentLog'].forEach(id => { if ($(id)) log(id, msg); });
+}
 function stat() {
-  $('statFiles').textContent = state.documentFiles.length;
+  $('statFiles').textContent = state.documentFiles.length + state.translateFiles.length;
   $('statDone').textContent = state.done;
   $('statErrors').textContent = state.errors;
 }
@@ -352,6 +358,65 @@ async function readFileText(file) {
   }
   return { text: new TextDecoder('utf-8').decode(buf), encoding:'utf-8-fallback' };
 }
+function csvEscape(v) {
+  if (v === null || v === undefined) v = '';
+  v = String(v);
+  return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
+function stringifyCSV(rows) {
+  return '\ufeff' + rows.map(row => row.map(csvEscape).join(',')).join('\r\n');
+}
+function findCol(headers, name) {
+  return headers.findIndex(h => h === name || String(h).trim() === name);
+}
+function autoPick(headers, candidates) {
+  const lower = headers.map(h => String(h).trim().toLowerCase());
+  for (const candidate of candidates) {
+    const idx = lower.indexOf(candidate.toLowerCase());
+    if (idx >= 0) return headers[idx];
+  }
+  return headers[0] || '';
+}
+function fillColumnSelects(headers) {
+  const selects = [$('sourceColumn'), $('countryColumn')];
+  selects.forEach(sel => {
+    if (!sel) return;
+    const keep = sel.value;
+    sel.innerHTML = sel.id === 'countryColumn' ? '<option value="">不使用列</option>' : '';
+    headers.forEach(header => {
+      const option = document.createElement('option');
+      option.value = header;
+      option.textContent = header;
+      sel.appendChild(option);
+    });
+    if ([...sel.options].some(option => option.value === keep)) sel.value = keep;
+  });
+  if ($('sourceColumn')) $('sourceColumn').value = autoPick(headers, ['source_text','source text','原文','待翻译文本','text','source','content','英文','中文']);
+}
+function updateTranslateInfo() {
+  $('translateFileInfo').textContent = state.translateFiles.length
+    ? `已载入 ${state.translateFiles.length} 个 CSV：` + state.translateFiles.map(item => item.name).join('；')
+    : '尚未上传 CSV。';
+  stat();
+}
+async function loadTranslateFiles(files) {
+  state.translateFiles = Array.from(files || []).filter(file => file.name.toLowerCase().endsWith('.csv')).map(file => ({name:file.name, file}));
+  updateTranslateInfo();
+  if (state.translateFiles[0]) {
+    try {
+      const {text} = await readFileText(state.translateFiles[0].file);
+      const headers = parseCSV(text)[0] || [];
+      fillColumnSelects(headers);
+    } catch (error) {
+      log('translateLog', '读取表头失败：' + (error.message || error));
+    }
+  }
+}
+function updateTranslateProgress(done, total) {
+  const pct = total ? Math.round(done / total * 100) : 0;
+  $('translateBar').style.width = pct + '%';
+  $('translateProgressText').textContent = `进度：${done}/${total} (${pct}%)`;
+}
 function findAnyCol(headers, candidates) {
   const lower = headers.map(item => String(item).trim().toLowerCase());
   for (const candidate of candidates) {
@@ -408,15 +473,15 @@ async function loadTranslationMemoryFiles(files) {
       state.translationMemoryStats.files++;
       state.translationMemoryStats.rows += result.rows;
       state.translationMemoryStats.duplicates += result.duplicates;
-      result.warnings.forEach(msg => log('documentLog', '标准库警告：' + msg));
-      log('documentLog', `标准库 ${file.name}：载入 ${result.added} 条，数据行 ${result.rows} 行。`);
+      result.warnings.forEach(msg => logShared('标准库警告：' + msg));
+      logShared(`标准库 ${file.name}：载入 ${result.added} 条，数据行 ${result.rows} 行。`);
     } catch (error) {
-      log('documentLog', '标准库读取失败：' + file.name + '；' + (error.message || error));
+      logShared('标准库读取失败：' + file.name + '；' + (error.message || error));
     }
   }
   state.translationMemoryStats.entries = state.translationMemory.size;
   updateTranslationMemoryInfo();
-  log('documentLog', `标准库加载完成：${state.translationMemoryStats.entries} 条可匹配译文。`);
+  logShared(`标准库加载完成：${state.translationMemoryStats.entries} 条可匹配译文。`);
 }
 function lookupTranslationMemory(sourceText, targetLang) {
   return state.translationMemory.get(translationMemoryKey(sourceText, targetLang)) || null;
@@ -451,10 +516,10 @@ async function loadTermsCsvFile(file) {
     const merged = Array.from(new Set([...parseLines($('protectedTerms').value), ...imported]));
     $('protectedTerms').value = merged.join('\n');
     $('termsCsvInfo').textContent = `已从 ${file.name} 导入 ${imported.length} 个术语；当前共 ${merged.length} 个受保护术语。`;
-    log('documentLog', `术语 CSV ${file.name}：导入 ${imported.length} 个术语。`);
+    logShared(`术语 CSV ${file.name}：导入 ${imported.length} 个术语。`);
   } catch (error) {
     $('termsCsvInfo').textContent = '术语 CSV 读取失败：' + (error.message || error);
-    log('documentLog', '术语 CSV 读取失败：' + (error.message || error));
+    logShared('术语 CSV 读取失败：' + (error.message || error));
   }
 }
 function getSharedRules() {
@@ -471,11 +536,12 @@ function promptTranslation(sourceLang, targetLang, sourceText, rules) {
     {role:'user', content:`This is a ${sourceLang} to ${targetLang} translation, please provide the ${targetLang} translation for this text.${rulesText}\nDo not provide any explanations or text apart from the translation.\n\n${sourceText}`},
   ];
 }
-function promptSuggestions(sourceLang, targetLang, sourceText, translation, rules, standardTranslation) {
+function promptSuggestions(sourceLang, targetLang, sourceText, translation, country, rules, standardTranslation) {
+  const countryLine = country ? `The final style and tone of the translation should match the style of ${targetLang} colloquially spoken in ${country}.\n` : '';
   const standardBlock = standardTranslation ? `\nA standard/reference translation is also provided in <STANDARD_TRANSLATION></STANDARD_TRANSLATION>. Pay special attention to whether the initial translation is consistent with the standard translation, whether the standard translation should be adopted as-is, and mention any terminology differences.\n<STANDARD_TRANSLATION>\n${standardTranslation}\n</STANDARD_TRANSLATION>\n` : '';
   const rulesBlock = formatTranslationRules(rules);
   const rulesText = rulesBlock ? `\n${rulesBlock}\nWhen reviewing, pay special attention to mistranslated, missing, or rewritten protected terms. Mention every protected-term violation explicitly.\n` : '';
-  return [{role:'system', content:`Your task is to carefully read a source text and a translation from ${sourceLang} to ${targetLang}, and then give constructive criticism and helpful suggestions to improve the translation.\n${rulesText}The source text and initial translation are as follows:\n<SOURCE_TEXT>\n${sourceText}\n</SOURCE_TEXT>\n<TRANSLATION>\n${translation}\n</TRANSLATION>${standardBlock}When writing suggestions, pay attention to accuracy, fluency, style, and terminology. Output only the suggestions and nothing else.`}];
+  return [{role:'system', content:`Your task is to carefully read a source text and a translation from ${sourceLang} to ${targetLang}, and then give constructive criticism and helpful suggestions to improve the translation.\n${countryLine}${rulesText}The source text and initial translation are as follows:\n<SOURCE_TEXT>\n${sourceText}\n</SOURCE_TEXT>\n<TRANSLATION>\n${translation}\n</TRANSLATION>${standardBlock}When writing suggestions, pay attention to accuracy, fluency, style, and terminology. Output only the suggestions and nothing else.`}];
 }
 function promptImprove(sourceLang, targetLang, sourceText, translation, suggestions, rules) {
   const rulesBlock = formatTranslationRules(rules);
@@ -496,14 +562,195 @@ async function withRetry(fn, retries) {
   }
   throw last;
 }
-async function workflowTranslate(sourceText, sourceLang, targetLang, rules, workflowMode, logId) {
+async function workflowTranslate(sourceText, sourceLang, targetLang, country, rules, workflowMode, logId) {
   const standardTranslation = String(rules?.standardTranslation || '');
   if (workflowMode === 'fast' && !standardTranslation) {
     return await chat(promptImprove(sourceLang, targetLang, sourceText, '', 'Translate the source text directly and produce a polished final translation.', rules), logId);
   }
   const initial = await chat(promptTranslation(sourceLang, targetLang, sourceText, rules), logId);
-  const suggestions = await chat(promptSuggestions(sourceLang, targetLang, sourceText, initial, rules, standardTranslation), logId);
+  const suggestions = await chat(promptSuggestions(sourceLang, targetLang, sourceText, initial, country, rules, standardTranslation), logId);
   return await chat(promptImprove(sourceLang, targetLang, sourceText, initial, suggestions, rules), logId);
+}
+function buildTasksForRows(rows, headers, meta) {
+  const srcIdx = findCol(headers, meta.sourceCol);
+  const countryIdx = meta.countryCol ? findCol(headers, meta.countryCol) : -1;
+  const tasks = [];
+  for (let r = 1; r < rows.length; r++) {
+    const source = (rows[r][srcIdx] ?? '').trim();
+    if (!source) continue;
+    for (const lang of meta.langs) {
+      const country = countryIdx >= 0 ? (rows[r][countryIdx] || meta.countryGlobal || '') : meta.countryGlobal;
+      tasks.push({rowIndex:r, lang, source, country});
+    }
+  }
+  return tasks;
+}
+function makeWideOutput(rows, headers, taskResults, langs) {
+  const newHeaders = [...headers];
+  const colMap = {};
+  langs.forEach(lang => {
+    let name = `生成结果_${lang}`;
+    const base = name;
+    let n = 1;
+    while (newHeaders.includes(name)) name = `${base}_${n++}`;
+    colMap[lang] = newHeaders.length;
+    newHeaders.push(name);
+  });
+  const out = [newHeaders];
+  for (let r = 1; r < rows.length; r++) {
+    const row = [...rows[r]];
+    while (row.length < newHeaders.length) row.push('');
+    out.push(row);
+  }
+  taskResults.forEach(item => {
+    out[item.rowIndex][colMap[item.lang]] = item.error ? `[ERROR] ${item.error}` : (item.warning ? `${item.text} [WARNING] ${item.warning}` : item.text);
+  });
+  return out;
+}
+function makeLongOutput(rows, headers, taskResults) {
+  const out = [[...headers, 'target_lang', 'translation', 'error']];
+  taskResults.forEach(item => {
+    const row = [...(rows[item.rowIndex] || [])];
+    while (row.length < headers.length) row.push('');
+    out.push([...row, item.lang, item.error ? '' : item.text, item.error || item.warning || '']);
+  });
+  return out;
+}
+async function processOneTranslate(item, meta, counter) {
+  const {text} = await readFileText(item.file);
+  const rows = parseCSV(text);
+  if (!rows.length || !rows[0].length) throw new Error('没有识别到 CSV 表头');
+  const headers = rows[0];
+  const srcIdx = findCol(headers, meta.sourceCol);
+  if (srcIdx < 0) throw new Error('没有找到原文列：' + meta.sourceCol);
+  const tasks = buildTasksForRows(rows, headers, meta);
+  const results = [];
+  let cursor = 0;
+  let tmHits = 0;
+  async function worker() {
+    while (cursor < tasks.length && !state.cancel) {
+      const task = tasks[cursor++];
+      try {
+        const standard = lookupTranslationMemory(task.source, task.lang);
+        let translated = '';
+        if (standard && meta.translationMemoryMode === 'direct') {
+          tmHits++;
+          state.translationMemoryStats.hits++;
+          translated = standard.text;
+          log('translateLog', `标准库命中：${task.lang} 第 ${task.rowIndex + 1} 行，使用 ${standard.sourceFile}:${standard.line}`);
+        } else {
+          if (standard) {
+            tmHits++;
+            state.translationMemoryStats.hits++;
+          } else {
+            state.translationMemoryStats.missesByLang[task.lang] = (state.translationMemoryStats.missesByLang[task.lang] || 0) + 1;
+          }
+          translated = await withRetry(() => workflowTranslate(task.source, meta.sourceLang, task.lang, task.country, {
+            protectedTerms: meta.protectedTerms,
+            customRules: meta.customRules,
+            standardTranslation: standard && meta.translationMemoryMode === 'review' ? standard.text : ''
+          }, meta.workflowMode, 'translateLog'), meta.retries);
+        }
+        const missing = validateProtectedTerms(task.source, translated, meta.protectedTerms);
+        const warning = missing.length ? '受保护术语缺失：' + missing.join(' / ') : '';
+        if (warning) log('translateLog', `术语警告：${task.lang} 第 ${task.rowIndex + 1} 行，${warning}`);
+        results.push({...task, text:translated, error:'', warning});
+      } catch (error) {
+        state.errors++;
+        stat();
+        results.push({...task, text:'', error:error.message || String(error), warning:''});
+      } finally {
+        state.done++;
+        counter.done++;
+        stat();
+        updateTranslateProgress(counter.done, counter.total);
+      }
+    }
+  }
+  await Promise.all(Array.from({length: meta.concurrency}, () => worker()));
+  const outRows = meta.outputMode === 'long' ? makeLongOutput(rows, headers, results) : makeWideOutput(rows, headers, results, meta.langs);
+  const blob = new Blob([stringifyCSV(outRows)], {type:'text/csv;charset=utf-8'});
+  return {name:item.name, blob, downloadName:fileStem(item.name) + '_clean.csv', tasks:tasks.length, errors:results.filter(x => x.error).length, warnings:results.filter(x => x.warning).length, tmHits};
+}
+function renderTranslateResult(result, status, message) {
+  $('translateTableWrap').classList.remove('hidden');
+  $('translateEmpty').classList.add('hidden');
+  const tr = document.createElement('tr');
+  const dl = result.blob ? '<a class="download-link secondary" href="#">下载</a>' : '-';
+  tr.innerHTML = `<td>${escapeHtml(result.name)}</td><td><span class="status ${status === 'ok' ? 'ok' : 'fail'}">${status === 'ok' ? '成功' : '失败'}</span></td><td>${result.tasks || 0}</td><td>${escapeHtml(message || (`错误 ${result.errors || 0} 个；警告 ${result.warnings || 0} 个；输出：${result.downloadName || ''}`))}</td><td>${dl}</td>`;
+  $('translateResultBody').appendChild(tr);
+  if (result.blob) {
+    tr.querySelector('a').addEventListener('click', event => {
+      event.preventDefault();
+      downloadBlob(result.blob, result.downloadName);
+    });
+  }
+}
+async function runTranslate() {
+  if (!state.translateFiles.length) { alert('请先上传 CSV 文件。'); return; }
+  const langs = selectedLangs();
+  if (!langs.length) { alert('请至少选择一个目标语言。'); return; }
+  if (!$('apiKey').value.trim() && !(state.translationMemory.size && $('translationMemoryMode').value === 'direct')) {
+    alert('请先填写 API Key，或上传标准翻译库并选择命中后直接使用。');
+    return;
+  }
+  state.cancel = false;
+  state.done = 0;
+  state.errors = 0;
+  state.translationMemoryStats.hits = 0;
+  state.translationMemoryStats.missesByLang = {};
+  stat();
+  $('runTranslateBtn').disabled = true;
+  $('cancelTranslateBtn').disabled = false;
+  $('translateResultBody').innerHTML = '';
+  $('translateTableWrap').classList.add('hidden');
+  $('translateEmpty').classList.remove('hidden');
+  state.translateResults = [];
+  setLog('translateLog', `开始批量翻译... 标准库 ${state.translationMemory.size} 条，模式：${$('translationMemoryMode').value === 'direct' ? '命中直接使用' : '命中后仍评审'}`);
+  const sharedRules = getSharedRules();
+  const meta = {
+    sourceCol: $('sourceColumn').value,
+    sourceLang: $('sourceLang').value,
+    countryGlobal: $('countryGlobal').value.trim(),
+    countryCol: $('countryColumn').value,
+    langs,
+    concurrency: Number($('concurrency').value),
+    retries: Number($('retries').value),
+    outputMode: $('outputMode').value,
+    workflowMode: $('workflowMode').value,
+    translationMemoryMode: $('translationMemoryMode').value,
+    protectedTerms: sharedRules.protectedTerms,
+    customRules: sharedRules.customRules
+  };
+  let total = 0;
+  for (const item of state.translateFiles) {
+    try {
+      const {text} = await readFileText(item.file);
+      const rows = parseCSV(text);
+      total += buildTasksForRows(rows, rows[0] || [], meta).length;
+    } catch (_) {}
+  }
+  const counter = {done:0, total};
+  updateTranslateProgress(0, total);
+  for (const item of state.translateFiles) {
+    if (state.cancel) break;
+    try {
+      log('translateLog', '处理文件：' + item.name);
+      const result = await processOneTranslate(item, meta, counter);
+      state.translateResults.push(result);
+      renderTranslateResult(result, 'ok');
+      log('translateLog', `完成：${item.name}；标准库命中 ${result.tmHits || 0}/${result.tasks || 0}。`);
+    } catch (error) {
+      state.errors++;
+      stat();
+      renderTranslateResult({name:item.name, tasks:0}, 'fail', error.message || String(error));
+      log('translateLog', '失败：' + item.name + '；' + (error.message || error));
+    }
+  }
+  $('runTranslateBtn').disabled = false;
+  $('cancelTranslateBtn').disabled = true;
+  const misses = Object.entries(state.translationMemoryStats.missesByLang).map(([lang, count]) => `${lang} ${count}`).join('；') || '无';
+  log('translateLog', (state.cancel ? '已停止。' : '批量翻译结束。') + ` 标准库累计命中 ${state.translationMemoryStats.hits || 0}；未命中语言：${misses}。`);
 }
 function updateProgress(done, total) {
   const pct = total ? Math.round(done / total * 100) : 0;
@@ -610,6 +857,10 @@ function attrAny(node, names) {
   }
   return '';
 }
+function relAttr(node, localName) {
+  if (!node) return '';
+  return node.getAttributeNS(REL_NS, localName) || node.getAttribute('r:' + localName) || '';
+}
 function emuToInch(value) {
   return Number(value || 0) / 914400;
 }
@@ -650,7 +901,7 @@ async function extractBackgroundSpec(zip, xmlDoc, relMap) {
   const blipFill = firstLocalName(bgPr, 'blipFill');
   if (blipFill) {
     const blip = firstLocalName(blipFill, 'blip');
-    const rid = attrAny(blip, ['r:embed', 'embed']);
+    const rid = relAttr(blip, 'embed') || attrAny(blip, ['embed']);
     const targetPath = relMap[rid];
     if (targetPath) {
       const data = await zipFileToDataUrl(zip, targetPath);
@@ -742,7 +993,7 @@ async function extractPptxDocument(file) {
     const images = [];
     for (const pic of localNameNodes(slideXml, 'pic')) {
       const blip = firstLocalName(pic, 'blip');
-      const rid = attrAny(blip, ['r:embed','embed']);
+      const rid = relAttr(blip, 'embed') || attrAny(blip, ['embed']);
       const targetPath = relMap[rid];
       if (!targetPath) continue;
       const xfrm = firstLocalName(pic, 'xfrm') || firstLocalName(firstLocalName(pic, 'spPr') || pic, 'xfrm');
@@ -788,7 +1039,7 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
           state.translationMemoryStats.hits++;
         } else {
           if (!standard) state.translationMemoryStats.missesByLang[targetLang] = (state.translationMemoryStats.missesByLang[targetLang] || 0) + 1;
-          translated = await withRetry(() => workflowTranslate(task.source, meta.sourceLang, targetLang, {
+          translated = await withRetry(() => workflowTranslate(task.source, meta.sourceLang, targetLang, '', {
             protectedTerms: meta.protectedTerms,
             customRules: meta.customRules,
             standardTranslation: standard && meta.translationMemoryMode === 'review' ? standard.text : ''
@@ -948,7 +1199,7 @@ async function buildTranslatedPptx(doc, lang, results) {
 
   const newOrder = [];
   for (const originalEntry of originalSlideIdEntries) {
-    const relId = attrAny(originalEntry, ['r:id', 'id']);
+    const relId = relAttr(originalEntry, 'id');
     const rel = slideRels.find(item => attrAny(item, ['Id']) === relId);
     const slidePath = rel ? resolveZipPath(presentationRelPath, attrAny(rel, ['Target'])) : '';
     newOrder.push(originalEntry);
@@ -990,8 +1241,11 @@ async function buildTranslatedPptx(doc, lang, results) {
 
     const newSldId = presentationXml.createElementNS('http://schemas.openxmlformats.org/presentationml/2006/main', 'p:sldId');
     newSldId.setAttribute('id', String(nextSlideId++));
-    newSldId.setAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'r:id', newRelId);
+    newSldId.setAttributeNS(REL_NS, 'r:id', newRelId);
     newOrder.push(newSldId);
+  }
+  if (newOrder.length !== originalSlideIdEntries.length * 2) {
+    throw new Error(`PPT 译文页插入失败：预期 ${originalSlideIdEntries.length * 2} 页，实际写入 ${newOrder.length} 页。`);
   }
 
   Array.from(sldIdLst.children).forEach(child => sldIdLst.removeChild(child));
@@ -1081,7 +1335,7 @@ async function runDocumentTranslate() {
           }
         } else {
           const blob = await buildTranslatedPptx(doc, lang, results);
-          renderDocumentResult({ name:item.name, lang, kind:'PPTX 翻译版', status:'ok', message:`保留 ${doc.slides.length} 页原稿，并在每页后新增 1 页高亮译文页`, blob, downloadName:`${fileStem(item.name)}_${lang}_translated.pptx` });
+          renderDocumentResult({ name:item.name, lang, kind:'PPTX 翻译版', status:'ok', message:`原稿 ${doc.slides.length} 页，输出共 ${doc.slides.length * 2} 页；每页后新增对应译文页`, blob, downloadName:`${fileStem(item.name)}_${lang}_translated.pptx` });
         }
       } catch (error) {
         state.errors++;
@@ -1109,6 +1363,8 @@ function init() {
   renderModels();
   renderLanguages();
   updateTranslationMemoryInfo();
+  updateTranslateInfo();
+  updateDocumentInfo();
   stat();
   $('modelFilter').addEventListener('input', renderModels);
   $('refreshModelsBtn').addEventListener('click', refreshModels);
@@ -1126,14 +1382,25 @@ function init() {
     renderLanguages();
     selectLangs(Array.from(new Set([...selectedLangs(), value])));
   });
+  $('translateFiles').addEventListener('change', event => loadTranslateFiles(event.target.files));
+  $('clearTranslateBtn').addEventListener('click', () => {
+    state.translateFiles = [];
+    updateTranslateInfo();
+    $('translateResultBody').innerHTML = '';
+    $('translateTableWrap').classList.add('hidden');
+    $('translateEmpty').classList.remove('hidden');
+  });
+  $('runTranslateBtn').addEventListener('click', runTranslate);
+  $('cancelTranslateBtn').addEventListener('click', () => { state.cancel = true; log('translateLog', '收到停止指令；正在等待当前请求结束。'); });
   $('documentFiles').addEventListener('change', event => loadDocumentFiles(event.target.files));
   $('clearDocumentBtn').addEventListener('click', () => { state.documentFiles = []; updateDocumentInfo(); $('documentResultBody').innerHTML = ''; $('documentTableWrap').classList.add('hidden'); $('documentEmpty').classList.remove('hidden'); });
   $('translationMemoryFiles').addEventListener('change', event => loadTranslationMemoryFiles(event.target.files));
-  $('clearTranslationMemoryBtn').addEventListener('click', () => { state.translationMemory = new Map(); state.translationMemoryStats = {entries:0,files:0,rows:0,duplicates:0,hits:0,missesByLang:{}}; updateTranslationMemoryInfo(); log('documentLog', '已清空标准翻译库。'); });
+  $('clearTranslationMemoryBtn').addEventListener('click', () => { state.translationMemory = new Map(); state.translationMemoryStats = {entries:0,files:0,rows:0,duplicates:0,hits:0,missesByLang:{}}; updateTranslationMemoryInfo(); logShared('已清空标准翻译库。'); });
   $('termsCsvFile').addEventListener('change', event => loadTermsCsvFile(event.target.files[0]));
   $('clearRulesBtn').addEventListener('click', () => { $('protectedTerms').value = ''; $('customRules').value = ''; $('termsCsvFile').value = ''; $('termsCsvInfo').textContent = '可选上传术语 CSV：优先读取 term/protected_term/术语/词条列；未找到时读取第一列非空值并追加到受保护术语。'; });
   $('runDocumentBtn').addEventListener('click', runDocumentTranslate);
   $('cancelDocumentBtn').addEventListener('click', () => { state.cancel = true; log('documentLog', '收到停止指令；正在等待当前请求结束。'); });
+  setupDrop('translateDrop', files => loadTranslateFiles(files));
   setupDrop('documentDrop', files => loadDocumentFiles(files));
 }
 init();
