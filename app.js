@@ -69,6 +69,10 @@ function tabs() {
     document.querySelectorAll('.section').forEach(item => item.classList.remove('active'));
     btn.classList.add('active');
     $('tab-' + btn.dataset.tab).classList.add('active');
+    const sharedRulesSection = $('sharedRulesSection');
+    if (sharedRulesSection) {
+      sharedRulesSection.classList.toggle('hidden', btn.dataset.tab === 'model');
+    }
   }));
 }
 function sanitizeBaseUrl(url) {
