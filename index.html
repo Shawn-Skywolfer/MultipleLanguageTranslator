@@ -118,7 +118,7 @@
       <div class="grid3">
         <div class="field"><label>Provider 名称</label><input id="providerName" value="AIHubMix" /></div>
         <div class="field"><label>Base URL</label><input id="baseUrl" value="https://aihubmix.com/v1" /></div>
-        <div class="field"><label>API Key</label><input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" /><div class="small">请只粘贴 Key 本身；不要带 Bearer、中文空格、换行或备注文字。</div></div>
+        <div class="field"><label>API Key</label><input id="apiKey" type="password" placeholder="请粘贴 Key 本身；不要带 Bearer、中文空格、换行或备注文字" autocomplete="off" /></div>
       </div>
       <div class="grid3">
         <div class="field"><label>当前模型 ID</label><input id="modelId" value="gpt-5.4" /></div>
@@ -230,7 +230,7 @@
     </div>
   </section>
 
-  <section class="card panel shared-rules">
+  <section id="sharedRulesSection" class="card panel shared-rules hidden">
     <h2>共享翻译规则与目标语言</h2>
     <div class="grid">
       <div>
