@@ -1132,24 +1132,6 @@ function ensureTextRun(paragraph, xmlDoc) {
   else paragraph.appendChild(run);
   return run;
 }
-function splitTextByWeights(text, weights) {
-  if (!weights.length) return [];
-  const normalizedWeights = weights.map(weight => Math.max(Number(weight) || 0, 0));
-  const totalWeight = normalizedWeights.reduce((sum, weight) => sum + weight, 0) || weights.length;
-  const source = String(text || '');
-  const parts = [];
-  let cursor = 0;
-  let cumulativeWeight = 0;
-  normalizedWeights.forEach((weight, index) => {
-    cumulativeWeight += weight || (totalWeight / weights.length);
-    const nextCursor = index === normalizedWeights.length - 1
-      ? source.length
-      : Math.max(cursor, Math.min(source.length, Math.round(source.length * cumulativeWeight / totalWeight)));
-    parts.push(source.slice(cursor, nextCursor));
-    cursor = nextCursor;
-  });
-  return parts;
-}
 function setTextNodeContent(textNode, value) {
   const content = String(value || '');
   textNode.textContent = content;
@@ -1165,14 +1147,45 @@ function replaceParagraphTextPreservingRuns(paragraph, text, xmlDoc) {
     setTextNodeContent(textNode, text);
     return;
   }
-  const parts = splitTextByWeights(text, textNodes.map(node => (node.textContent || '').length || 1));
-  textNodes.forEach((node, index) => setTextNodeContent(node, parts[index] || ''));
+  textNodes.forEach((node, index) => setTextNodeContent(node, index === 0 ? text : ''));
+}
+function splitTextByParagraphCount(text, count) {
+  const targetCount = Math.max(1, count || 1);
+  const sourceText = String(text || '').trim();
+  const explicitLines = /\r?\n/.test(sourceText) ? sourceText.split(/\r?\n/).map(line => line.trim()).filter(Boolean) : [];
+  if (explicitLines.length) {
+    if (explicitLines.length === targetCount) return explicitLines;
+    if (explicitLines.length > targetCount) {
+      return [
+        ...explicitLines.slice(0, targetCount - 1),
+        explicitLines.slice(targetCount - 1).join(' ')
+      ];
+    }
+    return [...explicitLines, ...Array(targetCount - explicitLines.length).fill('')];
+  }
+  const words = sourceText.split(/\s+/).filter(Boolean);
+  if (!words.length) return Array(targetCount).fill('');
+  if (targetCount === 1) return [words.join(' ')];
+  if (words.length === 1) {
+    const chars = Array.from(sourceText);
+    return Array.from({ length: targetCount }, (_, index) => {
+      const start = Math.floor(index * chars.length / targetCount);
+      const end = Math.floor((index + 1) * chars.length / targetCount);
+      return chars.slice(start, end).join('');
+    });
+  }
+  const lines = Array.from({ length: targetCount }, () => []);
+  words.forEach((word, index) => {
+    const lineIndex = Math.min(targetCount - 1, Math.floor(index * targetCount / words.length));
+    lines[lineIndex].push(word);
+  });
+  return lines.map(line => line.join(' '));
 }
 function updateTranslatedShape(sp, translatedText, xmlDoc) {
   const txBody = firstLocalName(sp, 'txBody');
   if (!txBody) return;
   const bodyPr = firstLocalName(txBody, 'bodyPr');
-  if (bodyPr) bodyPr.setAttribute('wrap', 'square');
+  if (bodyPr) bodyPr.setAttribute('wrap', 'none');
   const paragraphs = Array.from(txBody.children).filter(child => child.localName === 'p');
   let paragraph = paragraphs[0];
   if (!paragraph) {
@@ -1180,11 +1193,7 @@ function updateTranslatedShape(sp, translatedText, xmlDoc) {
     txBody.appendChild(paragraph);
   }
   const targetParagraphs = paragraphs.length ? paragraphs : [paragraph];
-  const normalizedText = String(translatedText || '').replace(/\s*\n+\s*/g, ' ').trim();
-  const paragraphParts = splitTextByWeights(normalizedText, targetParagraphs.map(item => {
-    const textNodes = localNameNodes(item, 't');
-    return textNodes.reduce((sum, node) => sum + ((node.textContent || '').length || 0), 0) || 1;
-  }));
+  const paragraphParts = splitTextByParagraphCount(translatedText, targetParagraphs.length);
   targetParagraphs.forEach((item, index) => replaceParagraphTextPreservingRuns(item, paragraphParts[index] || '', xmlDoc));
 
   let spPr = firstLocalName(sp, 'spPr');
