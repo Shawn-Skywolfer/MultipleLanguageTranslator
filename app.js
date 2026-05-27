@@ -1147,6 +1147,12 @@ function setTextNodeContent(textNode, value) {
   if (/^\s|\s$/.test(content) || /\s{2,}/.test(content)) textNode.setAttribute('xml:space', 'preserve');
   else textNode.removeAttribute('xml:space');
 }
+function textNodeFontSize(textNode) {
+  const run = textNode?.parentNode;
+  if (!run || run.localName !== 'r') return '';
+  const rPr = firstLocalName(run, 'rPr');
+  return rPr ? String(attrAny(rPr, ['sz']) || '') : '';
+}
 function replaceParagraphTextPreservingRuns(paragraph, text, xmlDoc) {
   const textNodes = localNameNodes(paragraph, 't');
   if (!textNodes.length) {
@@ -1154,6 +1160,11 @@ function replaceParagraphTextPreservingRuns(paragraph, text, xmlDoc) {
     const textNode = firstLocalName(run, 't') || xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:t');
     if (!textNode.parentNode) run.appendChild(textNode);
     setTextNodeContent(textNode, text);
+    return;
+  }
+  const fontSizes = new Set(textNodes.map(textNodeFontSize).filter(Boolean));
+  if (fontSizes.size <= 1) {
+    textNodes.forEach((node, index) => setTextNodeContent(node, index === 0 ? text : ''));
     return;
   }
   const effectiveCounts = textNodes.map(node => (node.textContent || '').replace(/\s+/g, '').length);
@@ -1198,14 +1209,14 @@ function replaceParagraphTextPreservingRuns(paragraph, text, xmlDoc) {
 }
 function splitTextByParagraphCount(text, count) {
   const targetCount = Math.max(1, count || 1);
-  const sourceText = String(text || '').trim();
-  const explicitLines = /\r?\n/.test(sourceText) ? sourceText.split(/\r?\n/).map(line => line.trim()).filter(Boolean) : [];
+  const sourceText = String(text || '');
+  const explicitLines = /\r?\n/.test(sourceText) ? sourceText.split(/\r?\n/) : [];
   if (explicitLines.length) {
     if (explicitLines.length === targetCount) return explicitLines;
     if (explicitLines.length > targetCount) {
       return [
         ...explicitLines.slice(0, targetCount - 1),
-        explicitLines.slice(targetCount - 1).join(' ')
+        explicitLines.slice(targetCount - 1).join('\n')
       ];
     }
     return [...explicitLines, ...Array(targetCount - explicitLines.length).fill('')];
