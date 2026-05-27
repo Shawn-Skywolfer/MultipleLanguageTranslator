@@ -20,7 +20,10 @@ const state = {
   done: 0,
   errors: 0,
   cancel: false,
+  opsLogs: [],
+  pv: 0,
 };
+const OPS_LOG_KEY = 'dp_ops_logs_v1';
 
 if (window.pdfjsLib) {
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
@@ -30,8 +33,12 @@ function log(id, msg) {
   const el = $(id);
   if (!el) return;
   const t = new Date().toLocaleTimeString();
-  el.textContent += `\n[${t}] ${msg}`;
+  const line = `[${t}] ${msg}`;
+  el.textContent += `\n${line}`;
   el.scrollTop = el.scrollHeight;
+  state.opsLogs.push({ at: new Date().toISOString(), area: id, message: String(msg || '') });
+  if (state.opsLogs.length > 5000) state.opsLogs = state.opsLogs.slice(-5000);
+  localStorage.setItem(OPS_LOG_KEY, JSON.stringify(state.opsLogs));
 }
 function setLog(id, msg) {
   const el = $(id);
@@ -41,9 +48,43 @@ function logShared(msg) {
   ['translateLog', 'documentLog'].forEach(id => { if ($(id)) log(id, msg); });
 }
 function stat() {
+  $('statPv').textContent = state.pv;
   $('statFiles').textContent = state.documentFiles.length + state.translateFiles.length;
   $('statDone').textContent = state.done;
   $('statErrors').textContent = state.errors;
+}
+function loadOpsLogs() {
+  try {
+    const raw = localStorage.getItem(OPS_LOG_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    state.opsLogs = Array.isArray(list) ? list : [];
+  } catch (_) {
+    state.opsLogs = [];
+  }
+}
+function exportOpsLogs() {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    pv: state.pv,
+    logs: state.opsLogs,
+  };
+  downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type:'application/json;charset=utf-8' }), `ops_logs_${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+  log('modelLog', `已导出操作日志：${state.opsLogs.length} 条。`);
+}
+function clearOpsLogs() {
+  state.opsLogs = [];
+  localStorage.removeItem(OPS_LOG_KEY);
+  log('modelLog', '已清空操作日志。');
+}
+async function increasePv() {
+  try {
+    const response = await fetch('/api/pv', { method: 'POST' });
+    const json = await response.json();
+    const pv = Number(json?.pv);
+    state.pv = Number.isFinite(pv) ? pv : 0;
+  } catch (_) {
+    state.pv = 0;
+  }
 }
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -53,6 +94,15 @@ function escapeHtml(s) {
 }
 function fileStem(name) {
   return String(name).replace(/\.[^.]+$/, '');
+}
+function safeNamePart(value) {
+  return String(value || '').trim().replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'lang';
+}
+function buildLangTag(langs) {
+  const list = Array.from(new Set((langs || []).map(safeNamePart).filter(Boolean)));
+  if (!list.length) return 'no-lang';
+  if (list.length === 1) return list[0];
+  return `multi_${list.join('+')}`;
 }
 function downloadBlob(blob, name) {
   const a = document.createElement('a');
@@ -674,7 +724,7 @@ async function processOneTranslate(item, meta, counter) {
   await Promise.all(Array.from({length: meta.concurrency}, () => worker()));
   const outRows = meta.outputMode === 'long' ? makeLongOutput(rows, headers, results) : makeWideOutput(rows, headers, results, meta.langs);
   const blob = new Blob([stringifyCSV(outRows)], {type:'text/csv;charset=utf-8'});
-  return {name:item.name, blob, downloadName:fileStem(item.name) + '_clean.csv', tasks:tasks.length, errors:results.filter(x => x.error).length, warnings:results.filter(x => x.warning).length, tmHits};
+  return {name:item.name, blob, downloadName:`${fileStem(item.name)}_${buildLangTag(meta.langs)}_clean.csv`, tasks:tasks.length, errors:results.filter(x => x.error).length, warnings:results.filter(x => x.warning).length, tmHits};
 }
 function renderTranslateResult(result, status, message) {
   $('translateTableWrap').classList.remove('hidden');
@@ -1028,8 +1078,54 @@ function collectDocumentTasks(doc) {
     return tasks;
   }
   const tasks = [];
-  doc.slides.forEach(slide => slide.shapes.forEach(shape => tasks.push({ id:shape.id, source:shape.text })));
+  doc.slides.forEach(slide => slide.shapes.forEach(shape => {
+    const lines = String(shape.text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    tasks.push({ id:shape.id, source:shape.text, lines });
+  }));
   return tasks;
+}
+function validatePptxTranslationChecklist(task, translated) {
+  const sourceLines = (task.lines || []).length;
+  const targetLines = String(translated || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean).length;
+  const issues = [];
+  if (sourceLines > 1 && targetLines < sourceLines) issues.push(`行数缩减：原 ${sourceLines} 行，译文 ${targetLines} 行`);
+  if (sourceLines > 1 && / \/\s?/.test(String(translated || ''))) issues.push('疑似多列内容被合并为斜杠分隔');
+  const sourceEffective = String(task.source || '').replace(/\s+/g, '').length;
+  const targetEffective = String(translated || '').replace(/\s+/g, '').length;
+  if (sourceEffective >= 12 && targetEffective <= 2) issues.push(`译文有效字符过少：原 ${sourceEffective}，译文 ${targetEffective}`);
+  if (sourceLines > 1 && targetLines > sourceLines * 2 + 1) issues.push(`行数异常膨胀：原 ${sourceLines} 行，译文 ${targetLines} 行`);
+  return issues;
+}
+function rebalanceLinesToCount(text, targetCount) {
+  const count = Math.max(1, Number(targetCount) || 1);
+  const lines = String(text || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  if (!lines.length) return Array(count).fill('');
+  if (lines.length === count) return lines;
+  if (lines.length > count) return [...lines.slice(0, count - 1), lines.slice(count - 1).join(' ')];
+  const words = lines.join(' ').split(/\s+/).filter(Boolean);
+  if (!words.length) return Array(count).fill('');
+  const out = Array.from({ length: count }, () => []);
+  words.forEach((w, i) => out[Math.min(count - 1, Math.floor(i * count / words.length))].push(w));
+  return out.map(item => item.join(' '));
+}
+async function translatePptxTask(task, targetLang, meta, standard) {
+  if (!task.lines || task.lines.length <= 1) {
+    return await workflowTranslate(task.source, meta.sourceLang, targetLang, '', {
+      protectedTerms: meta.protectedTerms,
+      customRules: meta.customRules,
+      standardTranslation: standard && meta.translationMemoryMode === 'review' ? standard.text : ''
+    }, meta.workflowMode, 'documentLog');
+  }
+  const translatedLines = [];
+  for (const line of task.lines) {
+    const one = await workflowTranslate(line, meta.sourceLang, targetLang, '', {
+      protectedTerms: meta.protectedTerms,
+      customRules: meta.customRules,
+      standardTranslation: ''
+    }, meta.workflowMode, 'documentLog');
+    translatedLines.push(String(one || '').trim());
+  }
+  return rebalanceLinesToCount(translatedLines.join('\n'), task.lines.length).join('\n');
 }
 async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
   const tasks = collectDocumentTasks(doc);
@@ -1046,11 +1142,31 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
           state.translationMemoryStats.hits++;
         } else {
           if (!standard) state.translationMemoryStats.missesByLang[targetLang] = (state.translationMemoryStats.missesByLang[targetLang] || 0) + 1;
-          translated = await withRetry(() => workflowTranslate(task.source, meta.sourceLang, targetLang, '', {
-            protectedTerms: meta.protectedTerms,
-            customRules: meta.customRules,
-            standardTranslation: standard && meta.translationMemoryMode === 'review' ? standard.text : ''
-          }, meta.workflowMode, 'documentLog'), meta.retries);
+          translated = await withRetry(() => (
+            doc.type === 'pptx'
+              ? translatePptxTask(task, targetLang, meta, standard)
+              : workflowTranslate(task.source, meta.sourceLang, targetLang, '', {
+                protectedTerms: meta.protectedTerms,
+                customRules: meta.customRules,
+                standardTranslation: standard && meta.translationMemoryMode === 'review' ? standard.text : ''
+              }, meta.workflowMode, 'documentLog')
+          ), meta.retries);
+        }
+        if (doc.type === 'pptx') {
+          const checklistIssues = validatePptxTranslationChecklist(task, translated);
+          if (checklistIssues.length) {
+            log('documentLog', `PPTX 质检提示 ${task.id}：${checklistIssues.join('；')}`);
+            const fallbackLines = [];
+            for (const line of (task.lines || [task.source])) {
+              const one = await withRetry(() => workflowTranslate(line, meta.sourceLang, targetLang, '', {
+                protectedTerms: meta.protectedTerms,
+                customRules: meta.customRules,
+                standardTranslation: ''
+              }, meta.workflowMode, 'documentLog'), meta.retries);
+              fallbackLines.push(String(one || '').trim());
+            }
+            translated = rebalanceLinesToCount(fallbackLines.join('\n'), (task.lines || []).length || 1).join('\n');
+          }
         }
         const missing = validateProtectedTerms(task.source, translated, meta.protectedTerms);
         results.set(task.id, { text: translated, warning: missing.length ? '受保护术语缺失：' + missing.join(' / ') : '', error:'' });
@@ -1138,6 +1254,36 @@ function setTextNodeContent(textNode, value) {
   if (/^\s|\s$/.test(content) || /\s{2,}/.test(content)) textNode.setAttribute('xml:space', 'preserve');
   else textNode.removeAttribute('xml:space');
 }
+function readParagraphRunBlueprint(paragraph) {
+  const runs = localNameNodes(paragraph, 'r').map(run => {
+    const rPr = firstLocalName(run, 'rPr');
+    const pPr = firstLocalName(paragraph, 'pPr');
+    const tNodes = localNameNodes(run, 't');
+    return {
+      size: String(attrAny(rPr, ['sz']) || ''),
+      effective: tNodes.map(n => (n.textContent || '').replace(/\s+/g, '').length).reduce((a, b) => a + b, 0),
+      textNodes: tNodes.length || 1,
+      paraSpacingBefore: String(attrAny(firstLocalName(pPr, 'spcBef'), ['val']) || ''),
+    };
+  });
+  return runs;
+}
+function readShapeBlueprint(txBody) {
+  const paragraphs = Array.from(txBody.children).filter(child => child.localName === 'p');
+  return paragraphs.map(readParagraphRunBlueprint);
+}
+function validateShapeBlueprint(before, after) {
+  if (before.length !== after.length) return '段落数量变化';
+  for (let i = 0; i < before.length; i++) {
+    if (before[i].length !== after[i].length) return `第 ${i + 1} 段 run 数量变化`;
+    for (let j = 0; j < before[i].length; j++) {
+      if (before[i][j].size !== after[i][j].size) return `第 ${i + 1} 段第 ${j + 1} 个 run 字号变化`;
+      if (before[i][j].textNodes !== after[i][j].textNodes) return `第 ${i + 1} 段第 ${j + 1} 个 run 文本节点数量变化`;
+      if (before[i][j].paraSpacingBefore !== after[i][j].paraSpacingBefore) return `第 ${i + 1} 段段前距变化`;
+    }
+  }
+  return '';
+}
 function replaceParagraphTextPreservingRuns(paragraph, text, xmlDoc) {
   const textNodes = localNameNodes(paragraph, 't');
   if (!textNodes.length) {
@@ -1147,18 +1293,94 @@ function replaceParagraphTextPreservingRuns(paragraph, text, xmlDoc) {
     setTextNodeContent(textNode, text);
     return;
   }
-  textNodes.forEach((node, index) => setTextNodeContent(node, index === 0 ? text : ''));
+  const effectiveCounts = textNodes.map(node => (node.textContent || '').replace(/\s+/g, '').length);
+  const totalEffective = effectiveCounts.reduce((sum, count) => sum + count, 0);
+  if (!totalEffective) {
+    textNodes.forEach((node, index) => setTextNodeContent(node, index === 0 ? text : ''));
+    return;
+  }
+  const chars = Array.from(String(text || ''));
+  const effectiveChars = chars.filter(ch => !/\s/.test(ch));
+  const targets = [];
+  let remainingEffective = effectiveChars.length;
+  effectiveCounts.forEach((count, index) => {
+    if (index === effectiveCounts.length - 1) {
+      targets.push(Math.max(0, remainingEffective));
+      remainingEffective = 0;
+      return;
+    }
+    const take = Math.min(count, Math.max(0, remainingEffective));
+    targets.push(take);
+    remainingEffective -= take;
+  });
+  let charCursor = 0;
+  let effectiveCursor = 0;
+  textNodes.forEach((node, index) => {
+    const targetStart = effectiveCursor;
+    const targetEnd = effectiveCursor + (targets[index] || 0);
+    effectiveCursor = targetEnd;
+    let consumedEffective = 0;
+    const out = [];
+    while (charCursor < chars.length) {
+      const ch = chars[charCursor];
+      const isEffective = !/\s/.test(ch);
+      if (isEffective && (targetStart + consumedEffective) >= targetEnd) break;
+      out.push(ch);
+      if (isEffective) consumedEffective += 1;
+      charCursor += 1;
+    }
+    if (index === textNodes.length - 1 && charCursor < chars.length) out.push(chars.slice(charCursor).join(''));
+    setTextNodeContent(node, out.join(''));
+  });
+}
+function splitTextByParagraphEffectiveCounts(text, paragraphs) {
+  const source = String(text || '');
+  const chars = Array.from(source);
+  const effectiveCounts = paragraphs.map(p => localNameNodes(p, 't').map(n => (n.textContent || '').replace(/\s+/g, '').length).reduce((a, b) => a + b, 0));
+  const totalEffective = effectiveCounts.reduce((a, b) => a + b, 0);
+  if (!totalEffective) return splitTextByParagraphCount(source, paragraphs.length);
+  const totalTranslatedEffective = chars.filter(ch => !/\s/.test(ch)).length;
+  const targets = [];
+  let remaining = totalTranslatedEffective;
+  effectiveCounts.forEach((count, index) => {
+    if (index === effectiveCounts.length - 1) {
+      targets.push(Math.max(0, remaining));
+      return;
+    }
+    const take = Math.min(count, Math.max(0, remaining));
+    targets.push(take);
+    remaining -= take;
+  });
+  let charCursor = 0;
+  let effectiveCursor = 0;
+  return paragraphs.map((_, index) => {
+    const targetStart = effectiveCursor;
+    const targetEnd = effectiveCursor + (targets[index] || 0);
+    effectiveCursor = targetEnd;
+    let consumedEffective = 0;
+    const out = [];
+    while (charCursor < chars.length) {
+      const ch = chars[charCursor];
+      const isEffective = !/\s/.test(ch);
+      if (isEffective && (targetStart + consumedEffective) >= targetEnd) break;
+      out.push(ch);
+      if (isEffective) consumedEffective += 1;
+      charCursor += 1;
+    }
+    if (index === paragraphs.length - 1 && charCursor < chars.length) out.push(chars.slice(charCursor).join(''));
+    return out.join('');
+  });
 }
 function splitTextByParagraphCount(text, count) {
   const targetCount = Math.max(1, count || 1);
-  const sourceText = String(text || '').trim();
-  const explicitLines = /\r?\n/.test(sourceText) ? sourceText.split(/\r?\n/).map(line => line.trim()).filter(Boolean) : [];
+  const sourceText = String(text || '');
+  const explicitLines = /\r?\n/.test(sourceText) ? sourceText.split(/\r?\n/) : [];
   if (explicitLines.length) {
     if (explicitLines.length === targetCount) return explicitLines;
     if (explicitLines.length > targetCount) {
       return [
         ...explicitLines.slice(0, targetCount - 1),
-        explicitLines.slice(targetCount - 1).join(' ')
+        explicitLines.slice(targetCount - 1).join('\n')
       ];
     }
     return [...explicitLines, ...Array(targetCount - explicitLines.length).fill('')];
@@ -1184,8 +1406,7 @@ function splitTextByParagraphCount(text, count) {
 function updateTranslatedShape(sp, translatedText, xmlDoc) {
   const txBody = firstLocalName(sp, 'txBody');
   if (!txBody) return;
-  const bodyPr = firstLocalName(txBody, 'bodyPr');
-  if (bodyPr) bodyPr.setAttribute('wrap', 'none');
+  const beforeBlueprint = readShapeBlueprint(txBody);
   const paragraphs = Array.from(txBody.children).filter(child => child.localName === 'p');
   let paragraph = paragraphs[0];
   if (!paragraph) {
@@ -1193,8 +1414,23 @@ function updateTranslatedShape(sp, translatedText, xmlDoc) {
     txBody.appendChild(paragraph);
   }
   const targetParagraphs = paragraphs.length ? paragraphs : [paragraph];
-  const paragraphParts = splitTextByParagraphCount(translatedText, targetParagraphs.length);
+  const paragraphParts = splitTextByParagraphEffectiveCounts(translatedText, targetParagraphs);
   targetParagraphs.forEach((item, index) => replaceParagraphTextPreservingRuns(item, paragraphParts[index] || '', xmlDoc));
+  const afterBlueprint = readShapeBlueprint(txBody);
+  const structureError = validateShapeBlueprint(beforeBlueprint, afterBlueprint);
+  if (structureError) {
+    log('documentLog', `PPTX 结构回退：${structureError}`);
+    const translatedParts = rebalanceLinesToCount(translatedText, targetParagraphs.length);
+    targetParagraphs.forEach((item, index) => {
+      const part = translatedParts[index] || '';
+      const tNodes = localNameNodes(item, 't');
+      if (!tNodes.length) {
+        replaceParagraphTextPreservingRuns(item, part, xmlDoc);
+        return;
+      }
+      tNodes.forEach((node, tIndex) => setTextNodeContent(node, tIndex === 0 ? part : ''));
+    });
+  }
 
   let spPr = firstLocalName(sp, 'spPr');
   if (!spPr) {
@@ -1390,6 +1626,7 @@ function setupDrop(id, callback) {
 }
 function init() {
   tabs();
+  loadOpsLogs();
   loadSettings();
   renderProviderPresets();
   renderModels();
@@ -1403,6 +1640,8 @@ function init() {
   $('testBtn').addEventListener('click', testConnection);
   $('saveSettingsBtn').addEventListener('click', saveSettings);
   $('forgetSettingsBtn').addEventListener('click', forgetSettings);
+  $('exportOpsLogBtn').addEventListener('click', exportOpsLogs);
+  $('clearOpsLogBtn').addEventListener('click', clearOpsLogs);
   $('selectAllLangBtn').addEventListener('click', () => document.querySelectorAll('.langCheck').forEach(item => { item.checked = true; }));
   $('clearLangBtn').addEventListener('click', () => document.querySelectorAll('.langCheck').forEach(item => { item.checked = false; }));
   $('selectEuroBtn').addEventListener('click', () => selectLangs(['German','Spanish','French','Italian','Dutch','Polish','Portuguese','Danish','Swedish']));
@@ -1434,6 +1673,10 @@ function init() {
   $('cancelDocumentBtn').addEventListener('click', () => { state.cancel = true; log('documentLog', '收到停止指令；正在等待当前请求结束。'); });
   setupDrop('translateDrop', files => loadTranslateFiles(files));
   setupDrop('documentDrop', files => loadDocumentFiles(files));
+  increasePv().then(() => {
+    stat();
+    log('modelLog', `页面访问记录：PV=${state.pv}`);
+  });
 }
 init();
 })();
