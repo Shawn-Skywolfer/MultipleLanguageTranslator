@@ -99,6 +99,7 @@
       <div class="pill-row"><span class="pill">CSV 批量翻译</span><span class="pill">PDF 文本抽取 + OCR</span><span class="pill">双语 Markdown / DOCX</span><span class="pill">PPTX 逐页译文页</span><span class="pill">Vercel 友好</span></div>
     </div>
     <div class="card stats">
+      <div class="stat"><strong id="statPv">0</strong><span class="muted">页面访问量（PV）</span></div>
       <div class="stat"><strong id="statFiles">0</strong><span class="muted">已上传文件</span></div>
       <div class="stat"><strong id="statDone">0</strong><span class="muted">已生成输出</span></div>
       <div class="stat"><strong id="statErrors">0</strong><span class="muted">失败 / 警告</span></div>
@@ -145,6 +146,10 @@
         </div>
         <div>
           <h3>模型 / 接口日志</h3>
+          <div class="button-row compact">
+            <button class="ghost" id="exportOpsLogBtn" type="button">导出操作日志</button>
+            <button class="ghost" id="clearOpsLogBtn" type="button">清空操作日志</button>
+          </div>
           <div class="log" id="modelLog">准备就绪。</div>
         </div>
       </div>
