@@ -20,7 +20,10 @@ const state = {
   done: 0,
   errors: 0,
   cancel: false,
+  opsLogs: [],
+  pv: 0,
 };
+const OPS_LOG_KEY = 'dp_ops_logs_v1';
 
 if (window.pdfjsLib) {
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
@@ -30,8 +33,12 @@ function log(id, msg) {
   const el = $(id);
   if (!el) return;
   const t = new Date().toLocaleTimeString();
-  el.textContent += `\n[${t}] ${msg}`;
+  const line = `[${t}] ${msg}`;
+  el.textContent += `\n${line}`;
   el.scrollTop = el.scrollHeight;
+  state.opsLogs.push({ at: new Date().toISOString(), area: id, message: String(msg || '') });
+  if (state.opsLogs.length > 5000) state.opsLogs = state.opsLogs.slice(-5000);
+  localStorage.setItem(OPS_LOG_KEY, JSON.stringify(state.opsLogs));
 }
 function setLog(id, msg) {
   const el = $(id);
@@ -41,9 +48,43 @@ function logShared(msg) {
   ['translateLog', 'documentLog'].forEach(id => { if ($(id)) log(id, msg); });
 }
 function stat() {
+  $('statPv').textContent = state.pv;
   $('statFiles').textContent = state.documentFiles.length + state.translateFiles.length;
   $('statDone').textContent = state.done;
   $('statErrors').textContent = state.errors;
+}
+function loadOpsLogs() {
+  try {
+    const raw = localStorage.getItem(OPS_LOG_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    state.opsLogs = Array.isArray(list) ? list : [];
+  } catch (_) {
+    state.opsLogs = [];
+  }
+}
+function exportOpsLogs() {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    pv: state.pv,
+    logs: state.opsLogs,
+  };
+  downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type:'application/json;charset=utf-8' }), `ops_logs_${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+  log('modelLog', `已导出操作日志：${state.opsLogs.length} 条。`);
+}
+function clearOpsLogs() {
+  state.opsLogs = [];
+  localStorage.removeItem(OPS_LOG_KEY);
+  log('modelLog', '已清空操作日志。');
+}
+async function increasePv() {
+  try {
+    const response = await fetch('/api/pv', { method: 'POST' });
+    const json = await response.json();
+    const pv = Number(json?.pv);
+    state.pv = Number.isFinite(pv) ? pv : 0;
+  } catch (_) {
+    state.pv = 0;
+  }
 }
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -1565,6 +1606,7 @@ function setupDrop(id, callback) {
 }
 function init() {
   tabs();
+  loadOpsLogs();
   loadSettings();
   renderProviderPresets();
   renderModels();
@@ -1578,6 +1620,8 @@ function init() {
   $('testBtn').addEventListener('click', testConnection);
   $('saveSettingsBtn').addEventListener('click', saveSettings);
   $('forgetSettingsBtn').addEventListener('click', forgetSettings);
+  $('exportOpsLogBtn').addEventListener('click', exportOpsLogs);
+  $('clearOpsLogBtn').addEventListener('click', clearOpsLogs);
   $('selectAllLangBtn').addEventListener('click', () => document.querySelectorAll('.langCheck').forEach(item => { item.checked = true; }));
   $('clearLangBtn').addEventListener('click', () => document.querySelectorAll('.langCheck').forEach(item => { item.checked = false; }));
   $('selectEuroBtn').addEventListener('click', () => selectLangs(['German','Spanish','French','Italian','Dutch','Polish','Portuguese','Danish','Swedish']));
@@ -1609,6 +1653,10 @@ function init() {
   $('cancelDocumentBtn').addEventListener('click', () => { state.cancel = true; log('documentLog', '收到停止指令；正在等待当前请求结束。'); });
   setupDrop('translateDrop', files => loadTranslateFiles(files));
   setupDrop('documentDrop', files => loadDocumentFiles(files));
+  increasePv().then(() => {
+    stat();
+    log('modelLog', `页面访问记录：PV=${state.pv}`);
+  });
 }
 init();
 })();
