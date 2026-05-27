@@ -1037,8 +1037,40 @@ function collectDocumentTasks(doc) {
     return tasks;
   }
   const tasks = [];
-  doc.slides.forEach(slide => slide.shapes.forEach(shape => tasks.push({ id:shape.id, source:shape.text })));
+  doc.slides.forEach(slide => slide.shapes.forEach(shape => {
+    const lines = String(shape.text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    tasks.push({ id:shape.id, source:shape.text, lines });
+  }));
   return tasks;
+}
+function validatePptxTranslationChecklist(task, translated) {
+  const sourceLines = (task.lines || []).length;
+  const targetLines = String(translated || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean).length;
+  const issues = [];
+  if (sourceLines > 1 && targetLines < sourceLines) issues.push(`行数缩减：原 ${sourceLines} 行，译文 ${targetLines} 行`);
+  const sourceEffective = String(task.source || '').replace(/\s+/g, '').length;
+  const targetEffective = String(translated || '').replace(/\s+/g, '').length;
+  if (sourceEffective >= 12 && targetEffective <= 2) issues.push(`译文有效字符过少：原 ${sourceEffective}，译文 ${targetEffective}`);
+  return issues;
+}
+async function translatePptxTask(task, targetLang, meta, standard) {
+  if (!task.lines || task.lines.length <= 1) {
+    return await workflowTranslate(task.source, meta.sourceLang, targetLang, '', {
+      protectedTerms: meta.protectedTerms,
+      customRules: meta.customRules,
+      standardTranslation: standard && meta.translationMemoryMode === 'review' ? standard.text : ''
+    }, meta.workflowMode, 'documentLog');
+  }
+  const translatedLines = [];
+  for (const line of task.lines) {
+    const one = await workflowTranslate(line, meta.sourceLang, targetLang, '', {
+      protectedTerms: meta.protectedTerms,
+      customRules: meta.customRules,
+      standardTranslation: ''
+    }, meta.workflowMode, 'documentLog');
+    translatedLines.push(String(one || '').trim());
+  }
+  return translatedLines.join('\n');
 }
 async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
   const tasks = collectDocumentTasks(doc);
@@ -1055,11 +1087,31 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
           state.translationMemoryStats.hits++;
         } else {
           if (!standard) state.translationMemoryStats.missesByLang[targetLang] = (state.translationMemoryStats.missesByLang[targetLang] || 0) + 1;
-          translated = await withRetry(() => workflowTranslate(task.source, meta.sourceLang, targetLang, '', {
-            protectedTerms: meta.protectedTerms,
-            customRules: meta.customRules,
-            standardTranslation: standard && meta.translationMemoryMode === 'review' ? standard.text : ''
-          }, meta.workflowMode, 'documentLog'), meta.retries);
+          translated = await withRetry(() => (
+            doc.type === 'pptx'
+              ? translatePptxTask(task, targetLang, meta, standard)
+              : workflowTranslate(task.source, meta.sourceLang, targetLang, '', {
+                protectedTerms: meta.protectedTerms,
+                customRules: meta.customRules,
+                standardTranslation: standard && meta.translationMemoryMode === 'review' ? standard.text : ''
+              }, meta.workflowMode, 'documentLog')
+          ), meta.retries);
+        }
+        if (doc.type === 'pptx') {
+          const checklistIssues = validatePptxTranslationChecklist(task, translated);
+          if (checklistIssues.length) {
+            log('documentLog', `PPTX 质检提示 ${task.id}：${checklistIssues.join('；')}`);
+            const fallbackLines = [];
+            for (const line of (task.lines || [task.source])) {
+              const one = await withRetry(() => workflowTranslate(line, meta.sourceLang, targetLang, '', {
+                protectedTerms: meta.protectedTerms,
+                customRules: meta.customRules,
+                standardTranslation: ''
+              }, meta.workflowMode, 'documentLog'), meta.retries);
+              fallbackLines.push(String(one || '').trim());
+            }
+            translated = fallbackLines.join('\n');
+          }
         }
         const missing = validateProtectedTerms(task.source, translated, meta.protectedTerms);
         results.set(task.id, { text: translated, warning: missing.length ? '受保护术语缺失：' + missing.join(' / ') : '', error:'' });
@@ -1150,11 +1202,13 @@ function setTextNodeContent(textNode, value) {
 function readParagraphRunBlueprint(paragraph) {
   const runs = localNameNodes(paragraph, 'r').map(run => {
     const rPr = firstLocalName(run, 'rPr');
+    const pPr = firstLocalName(paragraph, 'pPr');
     const tNodes = localNameNodes(run, 't');
     return {
       size: String(attrAny(rPr, ['sz']) || ''),
       effective: tNodes.map(n => (n.textContent || '').replace(/\s+/g, '').length).reduce((a, b) => a + b, 0),
       textNodes: tNodes.length || 1,
+      paraSpacingBefore: String(attrAny(firstLocalName(pPr, 'spcBef'), ['val']) || ''),
     };
   });
   return runs;
@@ -1170,6 +1224,7 @@ function validateShapeBlueprint(before, after) {
     for (let j = 0; j < before[i].length; j++) {
       if (before[i][j].size !== after[i][j].size) return `第 ${i + 1} 段第 ${j + 1} 个 run 字号变化`;
       if (before[i][j].textNodes !== after[i][j].textNodes) return `第 ${i + 1} 段第 ${j + 1} 个 run 文本节点数量变化`;
+      if (before[i][j].paraSpacingBefore !== after[i][j].paraSpacingBefore) return `第 ${i + 1} 段段前距变化`;
     }
   }
   return '';
@@ -1297,8 +1352,6 @@ function updateTranslatedShape(sp, translatedText, xmlDoc) {
   const txBody = firstLocalName(sp, 'txBody');
   if (!txBody) return;
   const beforeBlueprint = readShapeBlueprint(txBody);
-  const bodyPr = firstLocalName(txBody, 'bodyPr');
-  if (bodyPr) bodyPr.setAttribute('wrap', 'none');
   const paragraphs = Array.from(txBody.children).filter(child => child.localName === 'p');
   let paragraph = paragraphs[0];
   if (!paragraph) {
@@ -1311,10 +1364,10 @@ function updateTranslatedShape(sp, translatedText, xmlDoc) {
   const afterBlueprint = readShapeBlueprint(txBody);
   const structureError = validateShapeBlueprint(beforeBlueprint, afterBlueprint);
   if (structureError) {
+    log('documentLog', `PPTX 结构回退：${structureError}`);
     targetParagraphs.forEach((item, index) => {
       const fallback = splitTextByParagraphCount(translatedText, targetParagraphs.length)[index] || '';
-      const tNodes = localNameNodes(item, 't');
-      tNodes.forEach((node, tIndex) => setTextNodeContent(node, tIndex === 0 ? fallback : ''));
+      replaceParagraphTextPreservingRuns(item, fallback, xmlDoc);
     });
   }
 
