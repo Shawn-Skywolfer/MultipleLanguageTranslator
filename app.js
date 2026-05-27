@@ -1162,11 +1162,6 @@ function replaceParagraphTextPreservingRuns(paragraph, text, xmlDoc) {
     setTextNodeContent(textNode, text);
     return;
   }
-  const fontSizes = new Set(textNodes.map(textNodeFontSize).filter(Boolean));
-  if (fontSizes.size <= 1) {
-    textNodes.forEach((node, index) => setTextNodeContent(node, index === 0 ? text : ''));
-    return;
-  }
   const effectiveCounts = textNodes.map(node => (node.textContent || '').replace(/\s+/g, '').length);
   const totalEffective = effectiveCounts.reduce((sum, count) => sum + count, 0);
   if (!totalEffective) {
@@ -1205,6 +1200,44 @@ function replaceParagraphTextPreservingRuns(paragraph, text, xmlDoc) {
     }
     if (index === textNodes.length - 1 && charCursor < chars.length) out.push(chars.slice(charCursor).join(''));
     setTextNodeContent(node, out.join(''));
+  });
+}
+function splitTextByParagraphEffectiveCounts(text, paragraphs) {
+  const source = String(text || '');
+  const chars = Array.from(source);
+  const effectiveCounts = paragraphs.map(p => localNameNodes(p, 't').map(n => (n.textContent || '').replace(/\s+/g, '').length).reduce((a, b) => a + b, 0));
+  const totalEffective = effectiveCounts.reduce((a, b) => a + b, 0);
+  if (!totalEffective) return splitTextByParagraphCount(source, paragraphs.length);
+  const totalTranslatedEffective = chars.filter(ch => !/\s/.test(ch)).length;
+  const targets = [];
+  let remaining = totalTranslatedEffective;
+  effectiveCounts.forEach((count, index) => {
+    if (index === effectiveCounts.length - 1) {
+      targets.push(Math.max(0, remaining));
+      return;
+    }
+    const take = Math.min(count, Math.max(0, remaining));
+    targets.push(take);
+    remaining -= take;
+  });
+  let charCursor = 0;
+  let effectiveCursor = 0;
+  return paragraphs.map((_, index) => {
+    const targetStart = effectiveCursor;
+    const targetEnd = effectiveCursor + (targets[index] || 0);
+    effectiveCursor = targetEnd;
+    let consumedEffective = 0;
+    const out = [];
+    while (charCursor < chars.length) {
+      const ch = chars[charCursor];
+      const isEffective = !/\s/.test(ch);
+      if (isEffective && (targetStart + consumedEffective) >= targetEnd) break;
+      out.push(ch);
+      if (isEffective) consumedEffective += 1;
+      charCursor += 1;
+    }
+    if (index === paragraphs.length - 1 && charCursor < chars.length) out.push(chars.slice(charCursor).join(''));
+    return out.join('');
   });
 }
 function splitTextByParagraphCount(text, count) {
@@ -1251,7 +1284,7 @@ function updateTranslatedShape(sp, translatedText, xmlDoc) {
     txBody.appendChild(paragraph);
   }
   const targetParagraphs = paragraphs.length ? paragraphs : [paragraph];
-  const paragraphParts = splitTextByParagraphCount(translatedText, targetParagraphs.length);
+  const paragraphParts = splitTextByParagraphEffectiveCounts(translatedText, targetParagraphs);
   targetParagraphs.forEach((item, index) => replaceParagraphTextPreservingRuns(item, paragraphParts[index] || '', xmlDoc));
 
   let spPr = firstLocalName(sp, 'spPr');
