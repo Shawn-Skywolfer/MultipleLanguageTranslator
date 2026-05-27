@@ -54,6 +54,15 @@ function escapeHtml(s) {
 function fileStem(name) {
   return String(name).replace(/\.[^.]+$/, '');
 }
+function safeNamePart(value) {
+  return String(value || '').trim().replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'lang';
+}
+function buildLangTag(langs) {
+  const list = Array.from(new Set((langs || []).map(safeNamePart).filter(Boolean)));
+  if (!list.length) return 'no-lang';
+  if (list.length === 1) return list[0];
+  return `multi_${list.join('+')}`;
+}
 function downloadBlob(blob, name) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -674,7 +683,7 @@ async function processOneTranslate(item, meta, counter) {
   await Promise.all(Array.from({length: meta.concurrency}, () => worker()));
   const outRows = meta.outputMode === 'long' ? makeLongOutput(rows, headers, results) : makeWideOutput(rows, headers, results, meta.langs);
   const blob = new Blob([stringifyCSV(outRows)], {type:'text/csv;charset=utf-8'});
-  return {name:item.name, blob, downloadName:fileStem(item.name) + '_clean.csv', tasks:tasks.length, errors:results.filter(x => x.error).length, warnings:results.filter(x => x.warning).length, tmHits};
+  return {name:item.name, blob, downloadName:`${fileStem(item.name)}_${buildLangTag(meta.langs)}_clean.csv`, tasks:tasks.length, errors:results.filter(x => x.error).length, warnings:results.filter(x => x.warning).length, tmHits};
 }
 function renderTranslateResult(result, status, message) {
   $('translateTableWrap').classList.remove('hidden');
@@ -1147,18 +1156,94 @@ function replaceParagraphTextPreservingRuns(paragraph, text, xmlDoc) {
     setTextNodeContent(textNode, text);
     return;
   }
-  textNodes.forEach((node, index) => setTextNodeContent(node, index === 0 ? text : ''));
+  const effectiveCounts = textNodes.map(node => (node.textContent || '').replace(/\s+/g, '').length);
+  const totalEffective = effectiveCounts.reduce((sum, count) => sum + count, 0);
+  if (!totalEffective) {
+    textNodes.forEach((node, index) => setTextNodeContent(node, index === 0 ? text : ''));
+    return;
+  }
+  const chars = Array.from(String(text || ''));
+  const effectiveChars = chars.filter(ch => !/\s/.test(ch));
+  const targets = [];
+  let remainingEffective = effectiveChars.length;
+  effectiveCounts.forEach((count, index) => {
+    if (index === effectiveCounts.length - 1) {
+      targets.push(Math.max(0, remainingEffective));
+      remainingEffective = 0;
+      return;
+    }
+    const take = Math.min(count, Math.max(0, remainingEffective));
+    targets.push(take);
+    remainingEffective -= take;
+  });
+  let charCursor = 0;
+  let effectiveCursor = 0;
+  textNodes.forEach((node, index) => {
+    const targetStart = effectiveCursor;
+    const targetEnd = effectiveCursor + (targets[index] || 0);
+    effectiveCursor = targetEnd;
+    let consumedEffective = 0;
+    const out = [];
+    while (charCursor < chars.length) {
+      const ch = chars[charCursor];
+      const isEffective = !/\s/.test(ch);
+      if (isEffective && (targetStart + consumedEffective) >= targetEnd) break;
+      out.push(ch);
+      if (isEffective) consumedEffective += 1;
+      charCursor += 1;
+    }
+    if (index === textNodes.length - 1 && charCursor < chars.length) out.push(chars.slice(charCursor).join(''));
+    setTextNodeContent(node, out.join(''));
+  });
+}
+function splitTextByParagraphEffectiveCounts(text, paragraphs) {
+  const source = String(text || '');
+  const chars = Array.from(source);
+  const effectiveCounts = paragraphs.map(p => localNameNodes(p, 't').map(n => (n.textContent || '').replace(/\s+/g, '').length).reduce((a, b) => a + b, 0));
+  const totalEffective = effectiveCounts.reduce((a, b) => a + b, 0);
+  if (!totalEffective) return splitTextByParagraphCount(source, paragraphs.length);
+  const totalTranslatedEffective = chars.filter(ch => !/\s/.test(ch)).length;
+  const targets = [];
+  let remaining = totalTranslatedEffective;
+  effectiveCounts.forEach((count, index) => {
+    if (index === effectiveCounts.length - 1) {
+      targets.push(Math.max(0, remaining));
+      return;
+    }
+    const take = Math.min(count, Math.max(0, remaining));
+    targets.push(take);
+    remaining -= take;
+  });
+  let charCursor = 0;
+  let effectiveCursor = 0;
+  return paragraphs.map((_, index) => {
+    const targetStart = effectiveCursor;
+    const targetEnd = effectiveCursor + (targets[index] || 0);
+    effectiveCursor = targetEnd;
+    let consumedEffective = 0;
+    const out = [];
+    while (charCursor < chars.length) {
+      const ch = chars[charCursor];
+      const isEffective = !/\s/.test(ch);
+      if (isEffective && (targetStart + consumedEffective) >= targetEnd) break;
+      out.push(ch);
+      if (isEffective) consumedEffective += 1;
+      charCursor += 1;
+    }
+    if (index === paragraphs.length - 1 && charCursor < chars.length) out.push(chars.slice(charCursor).join(''));
+    return out.join('');
+  });
 }
 function splitTextByParagraphCount(text, count) {
   const targetCount = Math.max(1, count || 1);
-  const sourceText = String(text || '').trim();
-  const explicitLines = /\r?\n/.test(sourceText) ? sourceText.split(/\r?\n/).map(line => line.trim()).filter(Boolean) : [];
+  const sourceText = String(text || '');
+  const explicitLines = /\r?\n/.test(sourceText) ? sourceText.split(/\r?\n/) : [];
   if (explicitLines.length) {
     if (explicitLines.length === targetCount) return explicitLines;
     if (explicitLines.length > targetCount) {
       return [
         ...explicitLines.slice(0, targetCount - 1),
-        explicitLines.slice(targetCount - 1).join(' ')
+        explicitLines.slice(targetCount - 1).join('\n')
       ];
     }
     return [...explicitLines, ...Array(targetCount - explicitLines.length).fill('')];
@@ -1193,7 +1278,7 @@ function updateTranslatedShape(sp, translatedText, xmlDoc) {
     txBody.appendChild(paragraph);
   }
   const targetParagraphs = paragraphs.length ? paragraphs : [paragraph];
-  const paragraphParts = splitTextByParagraphCount(translatedText, targetParagraphs.length);
+  const paragraphParts = splitTextByParagraphEffectiveCounts(translatedText, targetParagraphs);
   targetParagraphs.forEach((item, index) => replaceParagraphTextPreservingRuns(item, paragraphParts[index] || '', xmlDoc));
 
   let spPr = firstLocalName(sp, 'spPr');
