@@ -1147,11 +1147,32 @@ function setTextNodeContent(textNode, value) {
   if (/^\s|\s$/.test(content) || /\s{2,}/.test(content)) textNode.setAttribute('xml:space', 'preserve');
   else textNode.removeAttribute('xml:space');
 }
-function textNodeFontSize(textNode) {
-  const run = textNode?.parentNode;
-  if (!run || run.localName !== 'r') return '';
-  const rPr = firstLocalName(run, 'rPr');
-  return rPr ? String(attrAny(rPr, ['sz']) || '') : '';
+function readParagraphRunBlueprint(paragraph) {
+  const runs = localNameNodes(paragraph, 'r').map(run => {
+    const rPr = firstLocalName(run, 'rPr');
+    const tNodes = localNameNodes(run, 't');
+    return {
+      size: String(attrAny(rPr, ['sz']) || ''),
+      effective: tNodes.map(n => (n.textContent || '').replace(/\s+/g, '').length).reduce((a, b) => a + b, 0),
+      textNodes: tNodes.length || 1,
+    };
+  });
+  return runs;
+}
+function readShapeBlueprint(txBody) {
+  const paragraphs = Array.from(txBody.children).filter(child => child.localName === 'p');
+  return paragraphs.map(readParagraphRunBlueprint);
+}
+function validateShapeBlueprint(before, after) {
+  if (before.length !== after.length) return '段落数量变化';
+  for (let i = 0; i < before.length; i++) {
+    if (before[i].length !== after[i].length) return `第 ${i + 1} 段 run 数量变化`;
+    for (let j = 0; j < before[i].length; j++) {
+      if (before[i][j].size !== after[i][j].size) return `第 ${i + 1} 段第 ${j + 1} 个 run 字号变化`;
+      if (before[i][j].textNodes !== after[i][j].textNodes) return `第 ${i + 1} 段第 ${j + 1} 个 run 文本节点数量变化`;
+    }
+  }
+  return '';
 }
 function replaceParagraphTextPreservingRuns(paragraph, text, xmlDoc) {
   const textNodes = localNameNodes(paragraph, 't');
@@ -1275,6 +1296,7 @@ function splitTextByParagraphCount(text, count) {
 function updateTranslatedShape(sp, translatedText, xmlDoc) {
   const txBody = firstLocalName(sp, 'txBody');
   if (!txBody) return;
+  const beforeBlueprint = readShapeBlueprint(txBody);
   const bodyPr = firstLocalName(txBody, 'bodyPr');
   if (bodyPr) bodyPr.setAttribute('wrap', 'none');
   const paragraphs = Array.from(txBody.children).filter(child => child.localName === 'p');
@@ -1286,6 +1308,15 @@ function updateTranslatedShape(sp, translatedText, xmlDoc) {
   const targetParagraphs = paragraphs.length ? paragraphs : [paragraph];
   const paragraphParts = splitTextByParagraphEffectiveCounts(translatedText, targetParagraphs);
   targetParagraphs.forEach((item, index) => replaceParagraphTextPreservingRuns(item, paragraphParts[index] || '', xmlDoc));
+  const afterBlueprint = readShapeBlueprint(txBody);
+  const structureError = validateShapeBlueprint(beforeBlueprint, afterBlueprint);
+  if (structureError) {
+    targetParagraphs.forEach((item, index) => {
+      const fallback = splitTextByParagraphCount(translatedText, targetParagraphs.length)[index] || '';
+      const tNodes = localNameNodes(item, 't');
+      tNodes.forEach((node, tIndex) => setTextNodeContent(node, tIndex === 0 ? fallback : ''));
+    });
+  }
 
   let spPr = firstLocalName(sp, 'spPr');
   if (!spPr) {
