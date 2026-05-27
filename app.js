@@ -1089,10 +1089,24 @@ function validatePptxTranslationChecklist(task, translated) {
   const targetLines = String(translated || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean).length;
   const issues = [];
   if (sourceLines > 1 && targetLines < sourceLines) issues.push(`行数缩减：原 ${sourceLines} 行，译文 ${targetLines} 行`);
+  if (sourceLines > 1 && / \/\s?/.test(String(translated || ''))) issues.push('疑似多列内容被合并为斜杠分隔');
   const sourceEffective = String(task.source || '').replace(/\s+/g, '').length;
   const targetEffective = String(translated || '').replace(/\s+/g, '').length;
   if (sourceEffective >= 12 && targetEffective <= 2) issues.push(`译文有效字符过少：原 ${sourceEffective}，译文 ${targetEffective}`);
+  if (sourceLines > 1 && targetLines > sourceLines * 2 + 1) issues.push(`行数异常膨胀：原 ${sourceLines} 行，译文 ${targetLines} 行`);
   return issues;
+}
+function rebalanceLinesToCount(text, targetCount) {
+  const count = Math.max(1, Number(targetCount) || 1);
+  const lines = String(text || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  if (!lines.length) return Array(count).fill('');
+  if (lines.length === count) return lines;
+  if (lines.length > count) return [...lines.slice(0, count - 1), lines.slice(count - 1).join(' ')];
+  const words = lines.join(' ').split(/\s+/).filter(Boolean);
+  if (!words.length) return Array(count).fill('');
+  const out = Array.from({ length: count }, () => []);
+  words.forEach((w, i) => out[Math.min(count - 1, Math.floor(i * count / words.length))].push(w));
+  return out.map(item => item.join(' '));
 }
 async function translatePptxTask(task, targetLang, meta, standard) {
   if (!task.lines || task.lines.length <= 1) {
@@ -1111,7 +1125,7 @@ async function translatePptxTask(task, targetLang, meta, standard) {
     }, meta.workflowMode, 'documentLog');
     translatedLines.push(String(one || '').trim());
   }
-  return translatedLines.join('\n');
+  return rebalanceLinesToCount(translatedLines.join('\n'), task.lines.length).join('\n');
 }
 async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
   const tasks = collectDocumentTasks(doc);
@@ -1151,7 +1165,7 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
               }, meta.workflowMode, 'documentLog'), meta.retries);
               fallbackLines.push(String(one || '').trim());
             }
-            translated = fallbackLines.join('\n');
+            translated = rebalanceLinesToCount(fallbackLines.join('\n'), (task.lines || []).length || 1).join('\n');
           }
         }
         const missing = validateProtectedTerms(task.source, translated, meta.protectedTerms);
@@ -1400,16 +1414,15 @@ function updateTranslatedShape(sp, translatedText, xmlDoc) {
     txBody.appendChild(paragraph);
   }
   const targetParagraphs = paragraphs.length ? paragraphs : [paragraph];
+  const originalShapeText = targetParagraphs.map(p => localNameNodes(p, 't').map(n => n.textContent || '').join('')).join('\n');
   const paragraphParts = splitTextByParagraphEffectiveCounts(translatedText, targetParagraphs);
   targetParagraphs.forEach((item, index) => replaceParagraphTextPreservingRuns(item, paragraphParts[index] || '', xmlDoc));
   const afterBlueprint = readShapeBlueprint(txBody);
   const structureError = validateShapeBlueprint(beforeBlueprint, afterBlueprint);
   if (structureError) {
     log('documentLog', `PPTX 结构回退：${structureError}`);
-    targetParagraphs.forEach((item, index) => {
-      const fallback = splitTextByParagraphCount(translatedText, targetParagraphs.length)[index] || '';
-      replaceParagraphTextPreservingRuns(item, fallback, xmlDoc);
-    });
+    const keepSourceParts = splitTextByParagraphCount(originalShapeText, targetParagraphs.length);
+    targetParagraphs.forEach((item, index) => replaceParagraphTextPreservingRuns(item, keepSourceParts[index] || '', xmlDoc));
   }
 
   let spPr = firstLocalName(sp, 'spPr');
