@@ -1147,6 +1147,12 @@ function setTextNodeContent(textNode, value) {
   if (/^\s|\s$/.test(content) || /\s{2,}/.test(content)) textNode.setAttribute('xml:space', 'preserve');
   else textNode.removeAttribute('xml:space');
 }
+function textNodeFontSize(textNode) {
+  const run = textNode?.parentNode;
+  if (!run || run.localName !== 'r') return '';
+  const rPr = firstLocalName(run, 'rPr');
+  return rPr ? String(attrAny(rPr, ['sz']) || '') : '';
+}
 function replaceParagraphTextPreservingRuns(paragraph, text, xmlDoc) {
   const textNodes = localNameNodes(paragraph, 't');
   if (!textNodes.length) {
