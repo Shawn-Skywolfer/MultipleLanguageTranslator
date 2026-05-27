@@ -1414,15 +1414,22 @@ function updateTranslatedShape(sp, translatedText, xmlDoc) {
     txBody.appendChild(paragraph);
   }
   const targetParagraphs = paragraphs.length ? paragraphs : [paragraph];
-  const originalShapeText = targetParagraphs.map(p => localNameNodes(p, 't').map(n => n.textContent || '').join('')).join('\n');
   const paragraphParts = splitTextByParagraphEffectiveCounts(translatedText, targetParagraphs);
   targetParagraphs.forEach((item, index) => replaceParagraphTextPreservingRuns(item, paragraphParts[index] || '', xmlDoc));
   const afterBlueprint = readShapeBlueprint(txBody);
   const structureError = validateShapeBlueprint(beforeBlueprint, afterBlueprint);
   if (structureError) {
     log('documentLog', `PPTX 结构回退：${structureError}`);
-    const keepSourceParts = splitTextByParagraphCount(originalShapeText, targetParagraphs.length);
-    targetParagraphs.forEach((item, index) => replaceParagraphTextPreservingRuns(item, keepSourceParts[index] || '', xmlDoc));
+    const translatedParts = rebalanceLinesToCount(translatedText, targetParagraphs.length);
+    targetParagraphs.forEach((item, index) => {
+      const part = translatedParts[index] || '';
+      const tNodes = localNameNodes(item, 't');
+      if (!tNodes.length) {
+        replaceParagraphTextPreservingRuns(item, part, xmlDoc);
+        return;
+      }
+      tNodes.forEach((node, tIndex) => setTextNodeContent(node, tIndex === 0 ? part : ''));
+    });
   }
 
   let spPr = firstLocalName(sp, 'spPr');
