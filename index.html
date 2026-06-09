@@ -85,6 +85,12 @@
     .inline-actions{display:flex;gap:10px;align-items:center}
     .inline-actions > :first-child{flex:1}
     .shared-rules{margin-top:18px}
+    .topbar{display:flex;justify-content:flex-end;margin-bottom:14px}
+    .language-switch{display:inline-flex;gap:4px;padding:4px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.82);box-shadow:var(--shadow-soft)}
+    .language-switch button{min-height:36px;padding:7px 13px;border-radius:999px;background:transparent;color:var(--muted);box-shadow:none}
+    .language-switch button:hover{transform:none;box-shadow:none;background:var(--brand-soft);color:var(--brand2)}
+    .language-switch button.active{background:var(--brand);color:#fff}
+    .language-switch button:focus-visible{outline:3px solid rgba(37,99,235,.25);outline-offset:2px}
     @media(max-width:1120px){.hero{grid-template-columns:1fr}.tabs{width:100%}}
     @media(max-width:960px){.grid,.grid3{grid-template-columns:1fr}.wrap{padding:24px 16px 56px}.intro,.panel{padding:22px}.tabs{border-radius:22px}.tab{flex:1 1 220px}}
     @media(max-width:640px){button,.file-label,.download-link{width:100%}.button-row > button,.button-row > .file-label,.button-row > .download-link{flex:1 1 100%}.inline-actions{flex-direction:column;align-items:stretch}.inline-actions > *{width:100%}.pill-row{gap:8px}.stat strong{font-size:28px}}
@@ -92,6 +98,12 @@
 </head>
 <body>
 <main class="wrap">
+  <div class="topbar">
+    <div class="language-switch" role="group" aria-label="界面语言">
+      <button type="button" data-language="zh-CN" aria-pressed="true">中文</button>
+      <button type="button" data-language="en" aria-pressed="false">English</button>
+    </div>
+  </div>
   <section class="hero">
     <div class="card intro">
       <h1>Digital Power 多格式翻译工作台</h1>
@@ -267,6 +279,7 @@
 <script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="./i18n.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>
