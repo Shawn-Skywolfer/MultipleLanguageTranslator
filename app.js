@@ -814,7 +814,7 @@ function updateProgress(done, total) {
 function isLikelyText(text) {
   const normalized = String(text || '').replace(/\s+/g, ' ').trim();
   if (!normalized) return false;
-  if (/^[\d\W_]+$/.test(normalized)) return false;
+  if (!/\p{L}/u.test(normalized)) return false;
   return normalized.length >= 2;
 }
 function groupPdfTextItems(items) {
@@ -898,6 +898,7 @@ function xmlFrom(text) {
   return new DOMParser().parseFromString(text, 'application/xml');
 }
 function localNameNodes(root, name) {
+  if (!root) return [];
   return Array.from(root.getElementsByTagName('*')).filter(node => node.localName === name);
 }
 function firstLocalName(root, name) {
@@ -1335,6 +1336,11 @@ function replaceParagraphTextPreservingRuns(paragraph, text, xmlDoc) {
 }
 function splitTextByParagraphEffectiveCounts(text, paragraphs) {
   const source = String(text || '');
+  if (/\r?\n/.test(source)) {
+    const lines = source.split(/\r?\n/);
+    if (lines.length === paragraphs.length) return lines;
+    return splitTextByParagraphCount(source, paragraphs.length);
+  }
   const chars = Array.from(source);
   const effectiveCounts = paragraphs.map(p => localNameNodes(p, 't').map(n => (n.textContent || '').replace(/\s+/g, '').length).reduce((a, b) => a + b, 0));
   const totalEffective = effectiveCounts.reduce((a, b) => a + b, 0);
@@ -1403,6 +1409,60 @@ function splitTextByParagraphCount(text, count) {
   });
   return lines.map(line => line.join(' '));
 }
+function scaleExplicitFontSizes(txBody, fontScale) {
+  if (!fontScale || fontScale === 100000) return;
+  Array.from(txBody.getElementsByTagName('*')).forEach(node => {
+    if (!['rPr', 'defRPr', 'endParaRPr'].includes(node.localName)) return;
+    const sz = Number(node.getAttribute('sz'));
+    if (!Number.isFinite(sz) || sz <= 0) return;
+    node.setAttribute('sz', String(Math.max(100, Math.round(sz * fontScale / 100000))));
+  });
+}
+function setNoAutofit(bodyPr, xmlDoc, replaceNode) {
+  const noAutofit = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:noAutofit');
+  if (replaceNode) {
+    bodyPr.replaceChild(noAutofit, replaceNode);
+    return;
+  }
+  const tail = Array.from(bodyPr.children).find(child => ['scene3d', 'sp3d', 'flatTx', 'extLst'].includes(child.localName));
+  if (tail) bodyPr.insertBefore(noAutofit, tail);
+  else bodyPr.appendChild(noAutofit);
+}
+function lockTranslatedBodyLayout(txBody, xmlDoc) {
+  let bodyPr = Array.from(txBody.children).find(child => child.localName === 'bodyPr');
+  if (!bodyPr) {
+    bodyPr = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:bodyPr');
+    txBody.insertBefore(bodyPr, txBody.firstChild);
+  }
+  bodyPr.setAttribute('wrap', 'none');
+  const children = Array.from(bodyPr.children);
+  const normAutofit = children.find(child => child.localName === 'normAutofit');
+  const spAutoFit = children.find(child => child.localName === 'spAutoFit');
+  const hasNoAutofit = children.some(child => child.localName === 'noAutofit');
+  if (normAutofit) {
+    const fontScale = Number(normAutofit.getAttribute('fontScale') || 100000);
+    const lnSpcReduction = Number(normAutofit.getAttribute('lnSpcReduction') || 0);
+    if (fontScale === 100000 && !lnSpcReduction) {
+      setNoAutofit(bodyPr, xmlDoc, normAutofit);
+      return;
+    }
+    const textRuns = [...localNameNodes(txBody, 'r'), ...localNameNodes(txBody, 'fld')].filter(run => localNameNodes(run, 't').length);
+    const allRunsSized = textRuns.length > 0 && textRuns.every(run => {
+      const rPr = firstLocalName(run, 'rPr');
+      return rPr && Number(rPr.getAttribute('sz')) > 0;
+    });
+    if (allRunsSized && !lnSpcReduction) {
+      scaleExplicitFontSizes(txBody, fontScale);
+      setNoAutofit(bodyPr, xmlDoc, normAutofit);
+    }
+    return;
+  }
+  if (spAutoFit) {
+    setNoAutofit(bodyPr, xmlDoc, spAutoFit);
+    return;
+  }
+  if (!hasNoAutofit) setNoAutofit(bodyPr, xmlDoc, null);
+}
 function updateTranslatedShape(sp, translatedText, xmlDoc) {
   const txBody = firstLocalName(sp, 'txBody');
   if (!txBody) return;
@@ -1431,6 +1491,7 @@ function updateTranslatedShape(sp, translatedText, xmlDoc) {
       tNodes.forEach((node, tIndex) => setTextNodeContent(node, tIndex === 0 ? part : ''));
     });
   }
+  lockTranslatedBodyLayout(txBody, xmlDoc);
 
   let spPr = firstLocalName(sp, 'spPr');
   if (!spPr) {
