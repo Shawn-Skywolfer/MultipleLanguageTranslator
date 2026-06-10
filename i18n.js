@@ -9,7 +9,18 @@
 
   const english = {
     'Digital Power 多格式翻译工作台': 'Digital Power Multi-format Translation Workbench',
-    '统一处理 `CSV`、`PDF` 和 `PPTX`。CSV 继续保留原有批量翻译能力；PDF 支持文字抽取与 OCR 回退并导出双语 Markdown / DOCX；PPTX 保留原始页，并在每页后新增一页对应的高亮译文页。模型调用统一走站内 API 代理，适合 Vercel 一键部署。': 'Translate CSV, PDF, and PPTX files in one place. CSV supports batch translation; PDF supports text extraction, OCR fallback, and bilingual Markdown/DOCX exports; PPTX preserves each original slide and adds a highlighted translated slide after it. Model requests use the built-in API proxy for easy Vercel deployment.',
+    '统一处理 `CSV`、`PDF` 和 `PPTX`。CSV 继续保留原有批量翻译能力；PDF 支持文字抽取与 OCR 回退，可导出双语 Markdown / DOCX 与图文对照 HTML；PPTX 保留原始页，并在每页后新增一页对应的高亮译文页。模型调用统一走站内 API 代理，适合 Vercel 一键部署。': 'Translate CSV, PDF, and PPTX files in one place. CSV supports batch translation; PDF supports text extraction with OCR fallback and exports bilingual Markdown/DOCX plus side-by-side HTML; PPTX preserves each original slide and adds a highlighted translated slide after it. Model requests use the built-in API proxy for easy Vercel deployment.',
+    '图文对照 HTML': 'Side-by-side HTML', '标准库命中次数': 'Translation Memory Hits',
+    '模型未配置': 'Model not configured', '模型未测试': 'Model not tested', '模型已连通': 'Model connected', '模型连接失败': 'Model connection failed',
+    '打包下载全部（ZIP）': 'Download All (ZIP)', '打包完成，已开始下载。': 'ZIP ready; download started.',
+    '请先上传 CSV 文件。': 'Please upload a CSV file first.', '请先上传 PDF 或 PPTX 文件。': 'Please upload a PDF or PPTX file first.',
+    '请至少选择一个目标语言。': 'Please select at least one target language.',
+    '请先填写 API Key，或上传标准翻译库并选择命中后直接使用。': 'Please enter an API key, or upload a translation memory and choose to use matches directly.',
+    'PDF 至少需要勾选一种输出格式。': 'Select at least one PDF output format.',
+    '连通测试成功': 'Connection test passed',
+    '未选择目标语言': 'No target languages selected', '（未选择）': '(none selected)',
+    '进行中': 'In progress', '正在翻译…': 'Translating…', '移除此文件': 'Remove this file',
+    '显示或隐藏 API Key': 'Show or hide the API key', '点击或拖拽上传': 'Click or drop files to upload',
     'CSV 批量翻译': 'CSV Batch Translation', 'PDF 文本抽取 + OCR': 'PDF Text Extraction + OCR',
     '双语 Markdown / DOCX': 'Bilingual Markdown / DOCX', 'PPTX 逐页译文页': 'PPTX Translated Slides', 'Vercel 友好': 'Vercel Ready',
     '页面访问量（PV）': 'Page Views (PV)', '已上传文件': 'Files Uploaded', '已生成输出': 'Outputs Generated', '失败 / 警告': 'Errors / Warnings',
@@ -23,14 +34,14 @@
     '当前实现默认走站内代理，更适合直接部署到 Vercel。部署后只需填写你的 Provider 参数即可开始翻译。': 'Requests use the built-in proxy by default for easy Vercel deployment. After deployment, enter your provider settings to start translating.',
     '模型关键字筛选': 'Filter Models', '模型 / 接口日志': 'Model / API Log', '导出操作日志': 'Export Activity Log', '清空操作日志': 'Clear Activity Log', '准备就绪。': 'Ready.',
     '上传 CSV': 'Upload CSV', '上传一个或多个 CSV 文件，自动识别表头并按共享的目标语言、术语规则和标准翻译库执行批量翻译。': 'Upload one or more CSV files. Headers are detected automatically, and shared target languages, terminology rules, and translation memory are applied.',
-    '清空': 'Clear', '也可以把 CSV 文件拖到这里': 'You can also drop CSV files here', '尚未上传 CSV。': 'No CSV files uploaded.', 'CSV 翻译参数': 'CSV Translation Settings',
+    '清空': 'Clear', '也可以把 CSV 文件拖到这里，或点击选择': 'You can also drop CSV files here, or click to choose', '尚未上传 CSV。': 'No CSV files uploaded.', 'CSV 翻译参数': 'CSV Translation Settings',
     '原文列': 'Source Column', '先上传 CSV': 'Upload a CSV first', '源语言': 'Source Language', '国家 / 地区（可选，全局）': 'Country / Region (optional, global)', '国家 / 地区列（可选，优先于全局）': 'Country / Region Column (optional, takes priority)', '不使用列': 'Do not use a column',
     '工作流模式': 'Workflow Mode', '完整 DSL：初译 + 建议 + 改译': 'Full DSL: Draft + Review + Revision', '快速模式：直接最终翻译': 'Fast Mode: Direct Final Translation',
     '输出格式': 'Output Format', '宽表：每个目标语言新增一列': 'Wide: Add one column per target language', '长表：每个目标语言生成一行': 'Long: Add one row per target language', '并发数': 'Concurrency', '失败重试次数': 'Retry Attempts',
     '开始批量翻译': 'Start Batch Translation', '停止': 'Stop', '尚未开始。': 'Not started.', 'CSV 翻译结果': 'CSV Translation Results',
     '文件': 'File', '状态': 'Status', '任务数': 'Tasks', '说明': 'Details', '下载': 'Download', '还没有 CSV 翻译结果。': 'No CSV translation results yet.',
     '上传文档': 'Upload Documents', '支持 `PDF` 和 `PPTX`。PDF 会优先做文字抽取，文本不足时自动回退到 OCR；PPTX 会保留原始页，并在每页后新增对应的高亮译文页。': 'Supports PDF and PPTX. PDFs use text extraction first and automatically fall back to OCR when needed. PPTX files preserve each original slide and add a highlighted translated slide after it.',
-    '上传 PDF / PPTX': 'Upload PDF / PPTX', '也可以把 PDF 或 PPTX 文件拖到这里': 'You can also drop PDF or PPTX files here', '尚未上传文档。': 'No documents uploaded.', '文档翻译参数': 'Document Translation Settings',
+    '上传 PDF / PPTX': 'Upload PDF / PPTX', '也可以把 PDF 或 PPTX 文件拖到这里，或点击选择': 'You can also drop PDF or PPTX files here, or click to choose', '尚未上传文档。': 'No documents uploaded.', '文档翻译参数': 'Document Translation Settings',
     '导出双语 Markdown（仅 PDF）': 'Export Bilingual Markdown (PDF only)', '导出双语 DOCX（仅 PDF）': 'Export Bilingual DOCX (PDF only)', '导出图文对照 HTML（仅 PDF）': 'Export Side-by-side HTML (PDF only)',
     'PPTX 会输出“原始页保留 + 每页后新增 1 页译文页”的翻译版 PPTX。译文页会直接复用原始幻灯片中的图片、图形元素和文本框位置，只替换对应文本框文字，并用黄色底色、黑色文字高亮。': 'The translated PPTX preserves every original slide and adds one translated slide after it. Translated slides reuse the original images, shapes, and text-box positions, replacing only the text and highlighting it with a yellow background and black type.',
     '开始文档翻译': 'Start Document Translation', '文档翻译结果': 'Document Translation Results', '语言': 'Language', '类型': 'Type', '还没有文档翻译结果。': 'No document translation results yet.',
@@ -66,7 +77,14 @@
     [/^已保存配置到本机浏览器。(.+)$/, 'Settings saved in this browser. $1'],
     [/^已清除本机保存的配置。$/, 'Saved local settings have been cleared.'],
     [/^收到停止指令；正在等待当前请求结束。$/, 'Stop requested; waiting for the current request to finish.'],
-    [/^已清空标准翻译库。$/, 'Translation memory cleared.']
+    [/^已清空标准翻译库。$/, 'Translation memory cleared.'],
+    [/^已载入 (\d+) 个 CSV：$/, 'Loaded $1 CSV file(s):'],
+    [/^已载入 (\d+) 个文档：$/, 'Loaded $1 document(s):'],
+    [/^已选 (\d+) 种语言：(.+)$/, 'Selected $1 language(s): $2'],
+    [/^（已选 (\d+)）$/, '(selected: $1)'],
+    [/^进度：(\d+)\/(\d+) \((\d+)%\) · 当前：(.+)$/, 'Progress: $1/$2 ($3%) · Now: $4'],
+    [/^连通测试失败：(.+)$/, 'Connection test failed: $1'],
+    [/^打包失败：(.+)$/, 'Failed to build ZIP: $1']
   ];
 
   function normalizeLanguage(language) {

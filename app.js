@@ -20,6 +20,10 @@ const state = {
   done: 0,
   errors: 0,
   cancel: false,
+  running: false,
+  progressNote: '',
+  translateNote: '',
+  documentDownloads: [],
   opsLogs: [],
   pv: 0,
 };
@@ -35,6 +39,7 @@ function log(id, msg) {
   const t = new Date().toLocaleTimeString();
   const line = `[${t}] ${msg}`;
   el.textContent += `\n${line}`;
+  if (el.textContent.length > 120000) el.textContent = '…\n' + el.textContent.slice(-80000);
   el.scrollTop = el.scrollHeight;
   state.opsLogs.push({ at: new Date().toISOString(), area: id, message: String(msg || '') });
   if (state.opsLogs.length > 5000) state.opsLogs = state.opsLogs.slice(-5000);
@@ -51,7 +56,10 @@ function stat() {
   $('statPv').textContent = state.pv;
   $('statFiles').textContent = state.documentFiles.length + state.translateFiles.length;
   $('statDone').textContent = state.done;
-  $('statErrors').textContent = state.errors;
+  const errEl = $('statErrors');
+  errEl.textContent = state.errors;
+  errEl.classList.toggle('bad', state.errors > 0);
+  $('statHits').textContent = state.translationMemoryStats.hits || 0;
 }
 function loadOpsLogs() {
   try {
@@ -113,11 +121,88 @@ function downloadBlob(blob, name) {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   a.remove();
 }
+function showToast(message, type) {
+  const box = $('toastBox');
+  if (!box) { alert(message); return; }
+  const item = document.createElement('div');
+  item.className = 'toast' + (type && type !== 'warn' ? ' ' + type : '');
+  item.textContent = message;
+  item.addEventListener('click', () => item.remove());
+  box.appendChild(item);
+  while (box.children.length > 3) box.removeChild(box.firstChild);
+  setTimeout(() => item.remove(), 5200);
+}
+function flashElement(el) {
+  if (!el) return;
+  el.classList.remove('flash-target');
+  void el.offsetWidth;
+  el.classList.add('flash-target');
+}
+function focusSharedRules() {
+  const sectionEl = $('sharedRulesSection');
+  if (!sectionEl || sectionEl.classList.contains('hidden')) return;
+  sectionEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  flashElement(sectionEl);
+}
+function updateModelStatus(status) {
+  const badge = $('modelStatusBadge');
+  if (!badge) return;
+  const map = { unset: '模型未配置', untested: '模型未测试', ok: '模型已连通', fail: '模型连接失败' };
+  badge.classList.remove('ok', 'fail', 'untested');
+  if (status === 'ok' || status === 'fail' || status === 'untested') badge.classList.add(status);
+  badge.textContent = map[status] || map.unset;
+}
+function formatBytes(size) {
+  if (!Number.isFinite(size)) return '';
+  if (size < 1024) return size + ' B';
+  if (size < 1048576) return (size / 1024).toFixed(1) + ' KB';
+  return (size / 1048576).toFixed(1) + ' MB';
+}
+function renderFileChips(containerId, files, emptyText, label) {
+  const box = $(containerId);
+  if (!files.length) { box.textContent = emptyText; return; }
+  box.innerHTML = `<span>${escapeHtml(label)}</span><div class="file-chips">` + files.map((item, index) =>
+    `<span class="file-chip"><span>${escapeHtml(item.name)}</span><span class="size">${formatBytes(item.file.size)}</span><button type="button" data-remove="${index}" aria-label="移除此文件">×</button></span>`
+  ).join('') + '</div>';
+}
+function updateLangSummaries() {
+  const langs = selectedLangs();
+  const text = langs.length
+    ? `已选 ${langs.length} 种语言：${langs.slice(0, 3).join(', ')}${langs.length > 3 ? ' …' : ''}`
+    : '未选择目标语言';
+  ['translateLangSummary', 'documentLangSummary'].forEach(id => { const el = $(id); if (el) el.textContent = text; });
+  const count = $('langCount');
+  if (count) count.textContent = langs.length ? `（已选 ${langs.length}）` : '（未选择）';
+}
+async function downloadResultsZip(entries, zipName, btn) {
+  if (!entries.length) return;
+  if (btn) btn.disabled = true;
+  try {
+    const zip = new window.JSZip();
+    entries.forEach(entry => zip.file(entry.downloadName, entry.blob));
+    const blob = await zip.generateAsync({ type: 'blob' });
+    downloadBlob(blob, zipName);
+    showToast('打包完成，已开始下载。', 'ok');
+  } catch (error) {
+    showToast('打包失败：' + (error.message || error), 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+function addPendingRow(tbodyId, wrapId, emptyId, cellsHtml) {
+  $(wrapId).classList.remove('hidden');
+  $(emptyId).classList.add('hidden');
+  const tr = document.createElement('tr');
+  tr.innerHTML = cellsHtml;
+  $(tbodyId).appendChild(tr);
+  return tr;
+}
 function tabs() {
   document.querySelectorAll('.tab').forEach(btn => btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(item => item.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(item => { item.classList.remove('active'); item.setAttribute('aria-selected', 'false'); });
     document.querySelectorAll('.section').forEach(item => item.classList.remove('active'));
     btn.classList.add('active');
+    btn.setAttribute('aria-selected', 'true');
     $('tab-' + btn.dataset.tab).classList.add('active');
     const sharedRulesSection = $('sharedRulesSection');
     if (sharedRulesSection) {
@@ -349,8 +434,12 @@ async function testConnection() {
     const json = await postChatCompletion(body, 'modelLog');
     const out = json.choices?.[0]?.message?.content || json.choices?.[0]?.text || '';
     log('modelLog', '连通测试成功，模型返回：' + out.trim());
+    updateModelStatus('ok');
+    showToast('连通测试成功', 'ok');
   } catch (error) {
     log('modelLog', '连通测试失败：' + (error.message || error));
+    updateModelStatus('fail');
+    showToast('连通测试失败：' + (error.message || error), 'error');
   }
 }
 function renderLanguages() {
@@ -363,12 +452,14 @@ function renderLanguages() {
     label.innerHTML = `<input type="checkbox" class="langCheck" value="${escapeHtml(lang)}" ${(picked.has(lang) || (!picked.size && index === 0)) ? 'checked' : ''} /> ${escapeHtml(lang)}`;
     box.appendChild(label);
   });
+  updateLangSummaries();
 }
 function selectedLangs() {
   return Array.from(document.querySelectorAll('.langCheck:checked')).map(el => el.value);
 }
 function selectLangs(list) {
   document.querySelectorAll('.langCheck').forEach(el => { el.checked = list.includes(el.value); });
+  updateLangSummaries();
 }
 function normalizeSource(text) {
   return String(text ?? '').trim().replace(/\s+/g, ' ');
@@ -448,9 +539,7 @@ function fillColumnSelects(headers) {
   if ($('sourceColumn')) $('sourceColumn').value = autoPick(headers, ['source_text','source text','原文','待翻译文本','text','source','content','英文','中文']);
 }
 function updateTranslateInfo() {
-  $('translateFileInfo').textContent = state.translateFiles.length
-    ? `已载入 ${state.translateFiles.length} 个 CSV：` + state.translateFiles.map(item => item.name).join('；')
-    : '尚未上传 CSV。';
+  renderFileChips('translateFileInfo', state.translateFiles, '尚未上传 CSV。', `已载入 ${state.translateFiles.length} 个 CSV：`);
   stat();
 }
 async function loadTranslateFiles(files) {
@@ -469,7 +558,8 @@ async function loadTranslateFiles(files) {
 function updateTranslateProgress(done, total) {
   const pct = total ? Math.round(done / total * 100) : 0;
   $('translateBar').style.width = pct + '%';
-  $('translateProgressText').textContent = `进度：${done}/${total} (${pct}%)`;
+  const note = state.translateNote && done < total ? ` · 当前：${state.translateNote}` : '';
+  $('translateProgressText').textContent = `进度：${done}/${total} (${pct}%)${note}`;
 }
 function findAnyCol(headers, candidates) {
   const lower = headers.map(item => String(item).trim().toLowerCase());
@@ -731,24 +821,26 @@ function renderTranslateResult(result, status, message) {
   $('translateEmpty').classList.add('hidden');
   const tr = document.createElement('tr');
   const dl = result.blob ? '<a class="download-link secondary" href="#">下载</a>' : '-';
-  tr.innerHTML = `<td>${escapeHtml(result.name)}</td><td><span class="status ${status === 'ok' ? 'ok' : 'fail'}">${status === 'ok' ? '成功' : '失败'}</span></td><td>${result.tasks || 0}</td><td>${escapeHtml(message || (`错误 ${result.errors || 0} 个；警告 ${result.warnings || 0} 个；输出：${result.downloadName || ''}`))}</td><td>${dl}</td>`;
+  tr.innerHTML = `<td data-label="文件">${escapeHtml(result.name)}</td><td data-label="状态"><span class="status ${status === 'ok' ? 'ok' : 'fail'}">${status === 'ok' ? '成功' : '失败'}</span></td><td data-label="任务数">${result.tasks || 0}</td><td data-label="说明">${escapeHtml(message || (`错误 ${result.errors || 0} 个；警告 ${result.warnings || 0} 个；输出：${result.downloadName || ''}`))}</td><td data-label="下载">${dl}</td>`;
   $('translateResultBody').appendChild(tr);
   if (result.blob) {
     tr.querySelector('a').addEventListener('click', event => {
       event.preventDefault();
       downloadBlob(result.blob, result.downloadName);
     });
+    $('zipTranslateBtn').classList.remove('hidden');
   }
 }
 async function runTranslate() {
-  if (!state.translateFiles.length) { alert('请先上传 CSV 文件。'); return; }
+  if (!state.translateFiles.length) { showToast('请先上传 CSV 文件。'); flashElement($('translateDrop')); return; }
   const langs = selectedLangs();
-  if (!langs.length) { alert('请至少选择一个目标语言。'); return; }
+  if (!langs.length) { showToast('请至少选择一个目标语言。'); focusSharedRules(); return; }
   if (!$('apiKey').value.trim() && !(state.translationMemory.size && $('translationMemoryMode').value === 'direct')) {
-    alert('请先填写 API Key，或上传标准翻译库并选择命中后直接使用。');
+    showToast('请先填写 API Key，或上传标准翻译库并选择命中后直接使用。', 'error');
     return;
   }
   state.cancel = false;
+  state.running = true;
   state.done = 0;
   state.errors = 0;
   state.translationMemoryStats.hits = 0;
@@ -759,6 +851,7 @@ async function runTranslate() {
   $('translateResultBody').innerHTML = '';
   $('translateTableWrap').classList.add('hidden');
   $('translateEmpty').classList.remove('hidden');
+  $('zipTranslateBtn').classList.add('hidden');
   state.translateResults = [];
   setLog('translateLog', `开始批量翻译... 标准库 ${state.translationMemory.size} 条，模式：${$('translationMemoryMode').value === 'direct' ? '命中直接使用' : '命中后仍评审'}`);
   const sharedRules = getSharedRules();
@@ -788,6 +881,9 @@ async function runTranslate() {
   updateTranslateProgress(0, total);
   for (const item of state.translateFiles) {
     if (state.cancel) break;
+    state.translateNote = item.name;
+    const pendingRow = addPendingRow('translateResultBody', 'translateTableWrap', 'translateEmpty',
+      `<td data-label="文件">${escapeHtml(item.name)}</td><td data-label="状态"><span class="status pending">进行中</span></td><td data-label="任务数">-</td><td data-label="说明">正在翻译…</td><td data-label="下载">-</td>`);
     try {
       log('translateLog', '处理文件：' + item.name);
       const result = await processOneTranslate(item, meta, counter);
@@ -799,8 +895,12 @@ async function runTranslate() {
       stat();
       renderTranslateResult({name:item.name, tasks:0}, 'fail', error.message || String(error));
       log('translateLog', '失败：' + item.name + '；' + (error.message || error));
+    } finally {
+      pendingRow.remove();
     }
   }
+  state.translateNote = '';
+  state.running = false;
   $('runTranslateBtn').disabled = false;
   $('cancelTranslateBtn').disabled = true;
   const misses = Object.entries(state.translationMemoryStats.missesByLang).map(([lang, count]) => `${lang} ${count}`).join('；') || '无';
@@ -809,7 +909,8 @@ async function runTranslate() {
 function updateProgress(done, total) {
   const pct = total ? Math.round(done / total * 100) : 0;
   $('documentBar').style.width = pct + '%';
-  $('documentProgressText').textContent = `进度：${done}/${total} (${pct}%)`;
+  const note = state.progressNote && done < total ? ` · 当前：${state.progressNote}` : '';
+  $('documentProgressText').textContent = `进度：${done}/${total} (${pct}%)${note}`;
 }
 function isLikelyText(text) {
   const normalized = String(text || '').replace(/\s+/g, ' ').trim();
@@ -1692,17 +1793,19 @@ function renderDocumentResult(result) {
   $('documentTableWrap').classList.remove('hidden');
   $('documentEmpty').classList.add('hidden');
   const tr = document.createElement('tr');
-  tr.innerHTML = `<td>${escapeHtml(result.name)}</td><td>${escapeHtml(result.lang)}</td><td>${escapeHtml(result.kind)}</td><td><span class="status ${result.status === 'ok' ? 'ok' : 'fail'}">${result.status === 'ok' ? '成功' : '失败'}</span></td><td>${escapeHtml(result.message || '')}</td><td>${result.blob ? '<a class="download-link secondary" href="#">下载</a>' : '-'}</td>`;
+  tr.innerHTML = `<td data-label="文件">${escapeHtml(result.name)}</td><td data-label="语言">${escapeHtml(result.lang)}</td><td data-label="类型">${escapeHtml(result.kind)}</td><td data-label="状态"><span class="status ${result.status === 'ok' ? 'ok' : 'fail'}">${result.status === 'ok' ? '成功' : '失败'}</span></td><td data-label="说明">${escapeHtml(result.message || '')}</td><td data-label="下载">${result.blob ? '<a class="download-link secondary" href="#">下载</a>' : '-'}</td>`;
   $('documentResultBody').appendChild(tr);
   if (result.blob) {
     tr.querySelector('a').addEventListener('click', event => {
       event.preventDefault();
       downloadBlob(result.blob, result.downloadName);
     });
+    state.documentDownloads.push({ blob: result.blob, downloadName: result.downloadName });
+    $('zipDocumentBtn').classList.remove('hidden');
   }
 }
 function updateDocumentInfo() {
-  $('documentFileInfo').textContent = state.documentFiles.length ? `已载入 ${state.documentFiles.length} 个文档：` + state.documentFiles.map(item => item.name).join('；') : '尚未上传文档。';
+  renderFileChips('documentFileInfo', state.documentFiles, '尚未上传文档。', `已载入 ${state.documentFiles.length} 个文档：`);
   stat();
 }
 function loadDocumentFiles(files) {
@@ -1710,18 +1813,21 @@ function loadDocumentFiles(files) {
   updateDocumentInfo();
 }
 async function runDocumentTranslate() {
-  if (!state.documentFiles.length) { alert('请先上传 PDF 或 PPTX 文件。'); return; }
+  if (!state.documentFiles.length) { showToast('请先上传 PDF 或 PPTX 文件。'); flashElement($('documentDrop')); return; }
   const langs = selectedLangs();
-  if (!langs.length) { alert('请至少选择一个目标语言。'); return; }
+  if (!langs.length) { showToast('请至少选择一个目标语言。'); focusSharedRules(); return; }
   if (!$('apiKey').value.trim() && !(state.translationMemory.size && $('translationMemoryMode').value === 'direct')) {
-    alert('请先填写 API Key，或上传标准翻译库并选择命中后直接使用。');
+    showToast('请先填写 API Key，或上传标准翻译库并选择命中后直接使用。', 'error');
     return;
   }
   if (!$('docOutputMarkdown').checked && !$('docOutputDocx').checked && !$('docOutputHtml').checked && !state.documentFiles.some(item => /\.pptx$/i.test(item.name))) {
-    alert('PDF 至少需要勾选一种输出格式。');
+    showToast('PDF 至少需要勾选一种输出格式。');
     return;
   }
   state.cancel = false;
+  state.running = true;
+  state.documentDownloads = [];
+  $('zipDocumentBtn').classList.add('hidden');
   $('runDocumentBtn').disabled = true;
   $('cancelDocumentBtn').disabled = false;
   $('documentResultBody').innerHTML = '';
@@ -1754,6 +1860,9 @@ async function runDocumentTranslate() {
     if (state.cancel) break;
     for (const lang of langs) {
       if (state.cancel) break;
+      state.progressNote = `${item.name} → ${lang}`;
+      const pendingRow = addPendingRow('documentResultBody', 'documentTableWrap', 'documentEmpty',
+        `<td data-label="文件">${escapeHtml(item.name)}</td><td data-label="语言">${escapeHtml(lang)}</td><td data-label="类型">-</td><td data-label="状态"><span class="status pending">进行中</span></td><td data-label="说明">正在翻译…</td><td data-label="下载">-</td>`);
       try {
         log('documentLog', `翻译 ${item.name} -> ${lang}`);
         const results = await translateDocumentToLanguage(doc, lang, meta, counter);
@@ -1779,19 +1888,29 @@ async function runDocumentTranslate() {
         stat();
         renderDocumentResult({ name:item.name, lang, kind:doc.type === 'pdf' ? '文档' : 'PPTX 审校版', status:'fail', message:error.message || String(error), blob:null, downloadName:'' });
         log('documentLog', `失败：${item.name} -> ${lang}；${error.message || error}`);
+      } finally {
+        pendingRow.remove();
       }
     }
   }
+  state.progressNote = '';
+  state.running = false;
   $('runDocumentBtn').disabled = false;
   $('cancelDocumentBtn').disabled = true;
   const misses = Object.entries(state.translationMemoryStats.missesByLang).map(([lang, count]) => `${lang} ${count}`).join('；') || '无';
   log('documentLog', (state.cancel ? '已停止。' : '文档翻译结束。') + ` 标准库累计命中 ${state.translationMemoryStats.hits || 0}；未命中语言：${misses}。`);
 }
-function setupDrop(id, callback) {
+function setupDrop(id, callback, inputId) {
   const dz = $(id);
   ['dragenter','dragover'].forEach(type => dz.addEventListener(type, event => { event.preventDefault(); dz.classList.add('dragover'); }));
   ['dragleave','drop'].forEach(type => dz.addEventListener(type, event => { event.preventDefault(); dz.classList.remove('dragover'); }));
   dz.addEventListener('drop', event => callback(event.dataTransfer.files));
+  if (inputId) {
+    dz.addEventListener('click', () => $(inputId).click());
+    dz.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $(inputId).click(); }
+    });
+  }
 }
 function init() {
   tabs();
@@ -1811,8 +1930,8 @@ function init() {
   $('forgetSettingsBtn').addEventListener('click', forgetSettings);
   $('exportOpsLogBtn').addEventListener('click', exportOpsLogs);
   $('clearOpsLogBtn').addEventListener('click', clearOpsLogs);
-  $('selectAllLangBtn').addEventListener('click', () => document.querySelectorAll('.langCheck').forEach(item => { item.checked = true; }));
-  $('clearLangBtn').addEventListener('click', () => document.querySelectorAll('.langCheck').forEach(item => { item.checked = false; }));
+  $('selectAllLangBtn').addEventListener('click', () => { document.querySelectorAll('.langCheck').forEach(item => { item.checked = true; }); updateLangSummaries(); });
+  $('clearLangBtn').addEventListener('click', () => { document.querySelectorAll('.langCheck').forEach(item => { item.checked = false; }); updateLangSummaries(); });
   $('selectEuroBtn').addEventListener('click', () => selectLangs(['German','Spanish','French','Italian','Dutch','Polish','Portuguese','Danish','Swedish']));
   $('addLangBtn').addEventListener('click', () => {
     const value = $('customLang').value.trim();
@@ -1840,8 +1959,42 @@ function init() {
   $('clearRulesBtn').addEventListener('click', () => { $('protectedTerms').value = ''; $('customRules').value = ''; $('termsCsvFile').value = ''; $('termsCsvInfo').textContent = '可选上传术语 CSV：优先读取 term/protected_term/术语/词条列；未找到时读取第一列非空值并追加到受保护术语。'; });
   $('runDocumentBtn').addEventListener('click', runDocumentTranslate);
   $('cancelDocumentBtn').addEventListener('click', () => { state.cancel = true; log('documentLog', '收到停止指令；正在等待当前请求结束。'); });
-  setupDrop('translateDrop', files => loadTranslateFiles(files));
-  setupDrop('documentDrop', files => loadDocumentFiles(files));
+  setupDrop('translateDrop', files => loadTranslateFiles(files), 'translateFiles');
+  setupDrop('documentDrop', files => loadDocumentFiles(files), 'documentFiles');
+  $('toggleKeyBtn').addEventListener('click', () => {
+    const input = $('apiKey');
+    input.type = input.type === 'password' ? 'text' : 'password';
+  });
+  $('apiKey').addEventListener('input', () => updateModelStatus($('apiKey').value.trim() ? 'untested' : 'unset'));
+  updateModelStatus($('apiKey').value.trim() ? 'untested' : 'unset');
+  $('languageBox').addEventListener('change', updateLangSummaries);
+  updateLangSummaries();
+  ['translateLangSummary', 'documentLangSummary'].forEach(id => $(id).addEventListener('click', focusSharedRules));
+  $('zipTranslateBtn').addEventListener('click', () => downloadResultsZip(state.translateResults.filter(item => item.blob), 'csv_translations.zip', $('zipTranslateBtn')));
+  $('zipDocumentBtn').addEventListener('click', () => downloadResultsZip(state.documentDownloads, 'document_translations.zip', $('zipDocumentBtn')));
+  $('translateFileInfo').addEventListener('click', async event => {
+    const index = event.target && event.target.dataset ? event.target.dataset.remove : undefined;
+    if (index === undefined) return;
+    state.translateFiles.splice(Number(index), 1);
+    updateTranslateInfo();
+    if (state.translateFiles[0]) {
+      try {
+        const {text} = await readFileText(state.translateFiles[0].file);
+        fillColumnSelects(parseCSV(text)[0] || []);
+      } catch (_) {}
+    }
+  });
+  $('documentFileInfo').addEventListener('click', event => {
+    const index = event.target && event.target.dataset ? event.target.dataset.remove : undefined;
+    if (index === undefined) return;
+    state.documentFiles.splice(Number(index), 1);
+    updateDocumentInfo();
+  });
+  window.addEventListener('beforeunload', event => {
+    if (!state.running) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
   increasePv().then(() => {
     stat();
     log('modelLog', `页面访问记录：PV=${state.pv}`);

@@ -37,7 +37,7 @@
     .grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
     .grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
     .field{display:grid;gap:8px;margin:12px 0}
-    label{display:block;font-size:13px;font-weight:800;line-height:1.5;color:#334155}
+    label{display:block;font-size:13px;font-weight:600;line-height:1.5;color:#334155}
     input,select,textarea{width:100%;border:1px solid var(--line);border-radius:14px;background:#fff;color:var(--ink);outline:none;font-size:14px;line-height:1.5;transition:border-color .16s ease,box-shadow .16s ease,background-color .16s ease}
     input,select{min-height:46px;padding:10px 14px}
     select{padding-right:40px}
@@ -60,9 +60,9 @@
     .notice.green{background:var(--green);border-color:#c8efd9}
     .notice.yellow{background:var(--yellow);border-color:#f7dda1}
     .small,.mini{color:var(--muted);font-size:12px;line-height:1.65}
-    .mini{font-size:11px}
-    .dropzone{border:2px dashed #bfd5ff;background:linear-gradient(180deg,#fbfdff 0%,#f3f8ff 100%);border-radius:18px;padding:24px 18px;text-align:center;color:#475569;margin-top:14px;min-height:108px;display:grid;place-items:center}
+    .dropzone{border:2px dashed #bfd5ff;background:linear-gradient(180deg,#fbfdff 0%,#f3f8ff 100%);border-radius:18px;padding:24px 18px;text-align:center;color:#475569;margin-top:14px;min-height:108px;display:grid;place-items:center;cursor:pointer}
     .dropzone.dragover{background:#eff6ff;border-color:var(--brand)}
+    .dropzone:focus-visible{outline:3px solid rgba(37,99,235,.3);outline-offset:2px}
     .log,.model-list{width:100%;max-width:100%;box-sizing:border-box;overflow:auto;overflow-wrap:anywhere;word-break:break-word}
     .log{border-radius:16px;background:#0f172a;color:#dbe7ff;padding:16px;font-size:12px;line-height:1.7;border:1px solid #1e293b;min-height:140px;white-space:pre-wrap;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
     .model-list{display:grid;gap:8px;max-height:332px;overflow:auto;padding-right:4px}
@@ -85,20 +85,51 @@
     .inline-actions{display:flex;gap:10px;align-items:center}
     .inline-actions > :first-child{flex:1}
     .shared-rules{margin-top:18px}
-    .topbar{display:flex;justify-content:flex-end;margin-bottom:14px}
+    .topbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
     .language-switch{display:inline-flex;gap:4px;padding:4px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.82);box-shadow:var(--shadow-soft)}
     .language-switch button{min-height:36px;padding:7px 13px;border-radius:999px;background:transparent;color:var(--muted);box-shadow:none}
     .language-switch button:hover{transform:none;box-shadow:none;background:var(--brand-soft);color:var(--brand2)}
     .language-switch button.active{background:var(--brand);color:#fff}
     .language-switch button:focus-visible{outline:3px solid rgba(37,99,235,.25);outline-offset:2px}
+    .model-status{display:inline-flex;align-items:center;gap:8px;min-height:36px;padding:7px 14px;border-radius:999px;font-size:13px;font-weight:700;border:1px solid var(--line);background:rgba(255,255,255,.82);color:var(--muted);box-shadow:var(--shadow-soft)}
+    .model-status::before{content:'';width:9px;height:9px;border-radius:50%;background:#94a3b8;flex:none}
+    .model-status.untested{color:#92400e;border-color:#f7dda1;background:var(--yellow)}
+    .model-status.untested::before{background:var(--warn)}
+    .model-status.ok{color:#166534;border-color:#bbe7cd;background:var(--green)}
+    .model-status.ok::before{background:var(--ok)}
+    .model-status.fail{color:#991b1b;border-color:#fecdd3;background:#fff1f2}
+    .model-status.fail::before{background:var(--bad)}
+    .toast-box{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:60;display:grid;gap:10px;width:min(92vw,560px);pointer-events:none}
+    .toast{pointer-events:auto;display:flex;gap:10px;align-items:flex-start;padding:13px 16px;border-radius:14px;font-size:14px;line-height:1.55;font-weight:600;box-shadow:0 18px 40px rgba(15,23,42,.18);border:1px solid #f7dda1;background:var(--yellow);color:#92400e;cursor:pointer;animation:toastIn .22s ease}
+    .toast.error{background:#fff1f2;border-color:#fecdd3;color:#991b1b}
+    .toast.ok{background:var(--green);border-color:#bbe7cd;color:#166534}
+    @keyframes toastIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+    .file-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+    .file-chip{display:inline-flex;align-items:center;gap:8px;max-width:100%;padding:6px 8px 6px 12px;border-radius:999px;background:#fff;border:1px solid #c8dcff;font-size:13px;line-height:1.4;color:#1e3a8a}
+    .file-chip .size{color:var(--muted);font-size:12px;flex:none}
+    .file-chip button{min-height:22px;width:22px;height:22px;padding:0;border-radius:50%;background:#e8effb;color:#1e40af;font-size:14px;line-height:1;flex:none}
+    .file-chip button:hover{background:#fee2e2;color:#b91c1c;transform:none;box-shadow:none}
+    .flash-target{animation:flashRing 1.6s ease}
+    @keyframes flashRing{0%{box-shadow:0 0 0 0 rgba(245,158,11,.55)}70%{box-shadow:0 0 0 14px rgba(245,158,11,0)}100%{box-shadow:var(--shadow)}}
+    .status.pending{background:#e0eaff;color:#1e40af}
+    .stat strong.bad{color:var(--bad)}
+    .key-wrap{display:flex;gap:8px}
+    .key-wrap input{flex:1;min-width:0}
+    .key-eye{min-height:46px;width:52px;padding:0;flex:none}
+    .page-footer{margin-top:26px;text-align:center;color:var(--muted);font-size:12px}
     @media(max-width:1120px){.hero{grid-template-columns:1fr}.tabs{width:100%}}
     @media(max-width:960px){.grid,.grid3{grid-template-columns:1fr}.wrap{padding:24px 16px 56px}.intro,.panel{padding:22px}.tabs{border-radius:22px}.tab{flex:1 1 220px}}
-    @media(max-width:640px){button,.file-label,.download-link{width:100%}.button-row > button,.button-row > .file-label,.button-row > .download-link{flex:1 1 100%}.inline-actions{flex-direction:column;align-items:stretch}.inline-actions > *{width:100%}.pill-row{gap:8px}.stat strong{font-size:28px}}
+    @media(max-width:640px){button,.file-label,.download-link{width:100%}.button-row > button,.button-row > .file-label,.button-row > .download-link{flex:1 1 100%}.inline-actions{flex-direction:column;align-items:stretch}.inline-actions > *{width:100%}.pill-row{gap:8px}.stats{grid-template-columns:repeat(2,1fr)}.stat strong{font-size:24px}.key-eye,.file-chip button{width:auto}.file-chip button{width:22px}
+      .responsive-table thead{display:none}
+      .responsive-table tr{display:block;padding:6px 0;border-bottom:1px solid var(--line)}
+      .responsive-table td{display:flex;gap:10px;border-bottom:0;padding:6px 12px}
+      .responsive-table td::before{content:attr(data-label);flex:0 0 72px;font-size:12px;color:var(--muted);font-weight:700}}
   </style>
 </head>
 <body>
 <main class="wrap">
   <div class="topbar">
+    <span class="model-status" id="modelStatusBadge">模型未配置</span>
     <div class="language-switch" role="group" aria-label="界面语言">
       <button type="button" data-language="zh-CN" aria-pressed="true">中文</button>
       <button type="button" data-language="en" aria-pressed="false">English</button>
@@ -107,21 +138,21 @@
   <section class="hero">
     <div class="card intro">
       <h1>Digital Power 多格式翻译工作台</h1>
-      <p class="muted">统一处理 `CSV`、`PDF` 和 `PPTX`。CSV 继续保留原有批量翻译能力；PDF 支持文字抽取与 OCR 回退并导出双语 Markdown / DOCX；PPTX 保留原始页，并在每页后新增一页对应的高亮译文页。模型调用统一走站内 API 代理，适合 Vercel 一键部署。</p>
-      <div class="pill-row"><span class="pill">CSV 批量翻译</span><span class="pill">PDF 文本抽取 + OCR</span><span class="pill">双语 Markdown / DOCX</span><span class="pill">PPTX 逐页译文页</span><span class="pill">Vercel 友好</span></div>
+      <p class="muted">统一处理 `CSV`、`PDF` 和 `PPTX`。CSV 继续保留原有批量翻译能力；PDF 支持文字抽取与 OCR 回退，可导出双语 Markdown / DOCX 与图文对照 HTML；PPTX 保留原始页，并在每页后新增一页对应的高亮译文页。模型调用统一走站内 API 代理，适合 Vercel 一键部署。</p>
+      <div class="pill-row"><span class="pill">CSV 批量翻译</span><span class="pill">PDF 文本抽取 + OCR</span><span class="pill">双语 Markdown / DOCX</span><span class="pill">图文对照 HTML</span><span class="pill">PPTX 逐页译文页</span><span class="pill">Vercel 友好</span></div>
     </div>
     <div class="card stats">
-      <div class="stat"><strong id="statPv">0</strong><span class="muted">页面访问量（PV）</span></div>
       <div class="stat"><strong id="statFiles">0</strong><span class="muted">已上传文件</span></div>
       <div class="stat"><strong id="statDone">0</strong><span class="muted">已生成输出</span></div>
       <div class="stat"><strong id="statErrors">0</strong><span class="muted">失败 / 警告</span></div>
+      <div class="stat"><strong id="statHits">0</strong><span class="muted">标准库命中次数</span></div>
     </div>
   </section>
 
-  <nav class="tabs">
-    <button class="tab active" data-tab="model">1. 模型配置</button>
-    <button class="tab" data-tab="translate">2. CSV 批量翻译</button>
-    <button class="tab" data-tab="document">3. 文档翻译</button>
+  <nav class="tabs" role="tablist">
+    <button class="tab active" role="tab" aria-selected="true" data-tab="model">1. 模型配置</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="translate">2. CSV 批量翻译</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="document">3. 文档翻译</button>
   </nav>
 
   <section id="tab-model" class="section active">
@@ -131,7 +162,7 @@
       <div class="grid3">
         <div class="field"><label>Provider 名称</label><input id="providerName" value="AIHubMix" /></div>
         <div class="field"><label>Base URL</label><input id="baseUrl" value="https://aihubmix.com/v1" /></div>
-        <div class="field"><label>API Key</label><input id="apiKey" type="password" placeholder="请粘贴 Key 本身；不要带 Bearer、中文空格、换行或备注文字" autocomplete="off" /></div>
+        <div class="field"><label>API Key</label><div class="key-wrap"><input id="apiKey" type="password" placeholder="请粘贴 Key 本身；不要带 Bearer、中文空格、换行或备注文字" autocomplete="off" /><button type="button" class="ghost key-eye" id="toggleKeyBtn" aria-label="显示或隐藏 API Key">👁</button></div></div>
       </div>
       <div class="grid3">
         <div class="field"><label>当前模型 ID</label><input id="modelId" value="gpt-5.4" /></div>
@@ -175,7 +206,7 @@
         <p class="muted">上传一个或多个 CSV 文件，自动识别表头并按共享的目标语言、术语规则和标准翻译库执行批量翻译。</p>
         <div class="button-row"><label class="file-label secondary" for="translateFiles">上传 CSV</label><button class="ghost" id="clearTranslateBtn">清空</button></div>
         <input id="translateFiles" type="file" accept=".csv,text/csv" multiple />
-        <div class="dropzone" id="translateDrop">也可以把 CSV 文件拖到这里</div>
+        <div class="dropzone" id="translateDrop" tabindex="0" role="button" aria-label="点击或拖拽上传">也可以把 CSV 文件拖到这里，或点击选择</div>
         <div class="notice blue" id="translateFileInfo">尚未上传 CSV。</div>
       </div>
       <div class="card panel">
@@ -198,12 +229,13 @@
         </div>
       </div>
     </div>
-    <div class="button-row"><button class="primary" id="runTranslateBtn">开始批量翻译</button><button class="danger" id="cancelTranslateBtn" disabled>停止</button></div>
+    <div class="button-row"><button class="primary" id="runTranslateBtn">开始批量翻译</button><button class="danger" id="cancelTranslateBtn" disabled>停止</button><button type="button" class="ghost" id="translateLangSummary"></button></div>
     <div class="progress"><div class="bar" id="translateBar"></div></div>
     <div class="mini" id="translateProgressText">尚未开始。</div>
     <div class="card panel">
       <h2>CSV 翻译结果</h2>
-      <div id="translateTableWrap" class="hidden"><table><thead><tr><th>文件</th><th>状态</th><th>任务数</th><th>说明</th><th>下载</th></tr></thead><tbody id="translateResultBody"></tbody></table></div>
+      <div class="button-row compact"><button type="button" class="secondary hidden" id="zipTranslateBtn">打包下载全部（ZIP）</button></div>
+      <div id="translateTableWrap" class="hidden"><table class="responsive-table"><thead><tr><th>文件</th><th>状态</th><th>任务数</th><th>说明</th><th>下载</th></tr></thead><tbody id="translateResultBody"></tbody></table></div>
       <div class="notice yellow" id="translateEmpty">还没有 CSV 翻译结果。</div>
       <div class="log" id="translateLog">准备就绪。</div>
     </div>
@@ -216,7 +248,7 @@
         <p class="muted">支持 `PDF` 和 `PPTX`。PDF 会优先做文字抽取，文本不足时自动回退到 OCR；PPTX 会保留原始页，并在每页后新增对应的高亮译文页。</p>
         <div class="button-row"><label class="file-label secondary" for="documentFiles">上传 PDF / PPTX</label><button class="ghost" id="clearDocumentBtn">清空</button></div>
         <input id="documentFiles" type="file" accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation" multiple />
-        <div class="dropzone" id="documentDrop">也可以把 PDF 或 PPTX 文件拖到这里</div>
+        <div class="dropzone" id="documentDrop" tabindex="0" role="button" aria-label="点击或拖拽上传">也可以把 PDF 或 PPTX 文件拖到这里，或点击选择</div>
         <div class="notice blue" id="documentFileInfo">尚未上传文档。</div>
       </div>
       <div class="card panel">
@@ -237,12 +269,13 @@
         <div class="notice yellow">PPTX 会输出“原始页保留 + 每页后新增 1 页译文页”的翻译版 PPTX。译文页会直接复用原始幻灯片中的图片、图形元素和文本框位置，只替换对应文本框文字，并用黄色底色、黑色文字高亮。</div>
       </div>
     </div>
-    <div class="button-row"><button class="primary" id="runDocumentBtn">开始文档翻译</button><button class="danger" id="cancelDocumentBtn" disabled>停止</button></div>
+    <div class="button-row"><button class="primary" id="runDocumentBtn">开始文档翻译</button><button class="danger" id="cancelDocumentBtn" disabled>停止</button><button type="button" class="ghost" id="documentLangSummary"></button></div>
     <div class="progress"><div class="bar" id="documentBar"></div></div>
     <div class="mini" id="documentProgressText">尚未开始。</div>
     <div class="card panel">
       <h2>文档翻译结果</h2>
-      <div id="documentTableWrap" class="hidden"><table><thead><tr><th>文件</th><th>语言</th><th>类型</th><th>状态</th><th>说明</th><th>下载</th></tr></thead><tbody id="documentResultBody"></tbody></table></div>
+      <div class="button-row compact"><button type="button" class="secondary hidden" id="zipDocumentBtn">打包下载全部（ZIP）</button></div>
+      <div id="documentTableWrap" class="hidden"><table class="responsive-table"><thead><tr><th>文件</th><th>语言</th><th>类型</th><th>状态</th><th>说明</th><th>下载</th></tr></thead><tbody id="documentResultBody"></tbody></table></div>
       <div class="notice yellow" id="documentEmpty">还没有文档翻译结果。</div>
       <div class="log" id="documentLog">准备就绪。</div>
     </div>
@@ -269,12 +302,14 @@
         <div class="notice blue" id="termsCsvInfo">可选上传术语 CSV：优先读取 term/protected_term/术语/词条列；未找到时读取第一列非空值并追加到受保护术语。</div>
       </div>
     </div>
-    <h3>目标翻译语言多选</h3>
+    <h3>目标翻译语言多选 <span class="muted" id="langCount"></span></h3>
     <div class="button-row"><button class="secondary" id="selectAllLangBtn">全选</button><button class="ghost" id="clearLangBtn">清空语言</button><button class="ghost" id="selectEuroBtn">选择欧洲常用语言</button></div>
     <div class="field"><label>添加自定义语言</label><div class="inline-actions"><input id="customLang" placeholder="例如 Japanese / Arabic / Swedish" /><button class="secondary" id="addLangBtn">添加</button></div></div>
     <div class="language-box" id="languageBox"></div>
   </section>
+  <footer class="page-footer">页面访问量（PV） <span id="statPv">0</span></footer>
 </main>
+<div class="toast-box" id="toastBox" aria-live="polite"></div>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
 <script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
