@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Digital Power 多格式翻译工作台 · 功能演示动画</title>
+<style>
+  body { margin:0; background:#020617; color:#e2e8f0; font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:14px 20px; flex-wrap:wrap; }
+  header b { font-size:16px; }
+  button { border:0; border-radius:8px; padding:8px 18px; font-size:14px; cursor:pointer; font-family:inherit; }
+  #btnPlay { background:#f59e0b; color:#1f2937; font-weight:600; }
+  #btnReplay { background:#334155; color:#e2e8f0; }
+  #btnExport { background:#10b981; color:#052e16; font-weight:600; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  #status { font-size:13px; color:#94a3b8; }
+  .wrap { display:flex; justify-content:center; padding:0 20px 24px; }
+  canvas { width:min(100%, 1280px); border-radius:12px; box-shadow:0 8px 40px rgba(0,0,0,.5); background:#0b1220; }
+  footer { text-align:center; font-size:12px; color:#64748b; padding-bottom:20px; }
+</style>
+</head>
+<body>
+<header>
+  <b>Digital Power 多格式翻译工作台 · 功能演示动画</b>
+  <button id="btnPlay">▶ 播放</button>
+  <button id="btnReplay">↺ 重播</button>
+  <button id="btnExport">⬇ 导出视频</button>
+  <span id="status">就绪 · 全片约 78 秒</span>
+</header>
+<div class="wrap"><canvas id="cv" width="1920" height="1080"></canvas></div>
+<footer>导出为实时录制（约 78 秒），生成 WebM 视频文件，可直接播放或导入剪映 / Premiere 转 MP4。</footer>
+<script>
+'use strict';
+const W = 1920, H = 1080;
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+// ---------- 基础工具 ----------
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const ez = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const seg = (p, a, b) => ez(clamp((p - a) / (b - a), 0, 1));
+const lerp = (a, b, t) => a + (b - a) * t;
+function rr(x, y, w, h, r) {
+  const rad = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rad, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rad);
+  ctx.arcTo(x + w, y + h, x, y + h, rad);
+  ctx.arcTo(x, y + h, x, y, rad);
+  ctx.arcTo(x, y, x + w, y, rad);
+  ctx.closePath();
+}
+function txt(s, x, y, o) {
+  o = o || {};
+  ctx.save();
+  ctx.globalAlpha *= o.alpha == null ? 1 : o.alpha;
+  ctx.fillStyle = o.color || '#111827';
+  ctx.font = `${o.weight || ''} ${o.size || 32}px "Segoe UI","Microsoft YaHei",sans-serif`.trim();
+  ctx.textAlign = o.align || 'left';
+  ctx.textBaseline = o.baseline || 'alphabetic';
+  ctx.fillText(s, x, y);
+  ctx.restore();
+}
+function panel(x, y, w, h, o) {
+  o = o || {};
+  ctx.save();
+  ctx.globalAlpha *= o.alpha == null ? 1 : o.alpha;
+  ctx.shadowColor = 'rgba(2,6,23,.35)';
+  ctx.shadowBlur = 30;
+  ctx.shadowOffsetY = 10;
+  ctx.fillStyle = o.fill || '#ffffff';
+  rr(x, y, w, h, o.r == null ? 18 : o.r);
+  ctx.fill();
+  ctx.restore();
+}
+function chip(s, x, y, o) {
+  o = o || {};
+  const size = o.size || 26;
+  ctx.save();
+  ctx.globalAlpha *= o.alpha == null ? 1 : o.alpha;
+  ctx.font = `${size}px "Segoe UI","Microsoft YaHei",sans-serif`;
+  const w = ctx.measureText(s).width + 36;
+  ctx.fillStyle = o.bg || '#1e293b';
+  rr(x, y, w, size + 22, (size + 22) / 2);
+  ctx.fill();
+  ctx.fillStyle = o.color || '#e2e8f0';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(s, x + w / 2, y + (size + 22) / 2 + 1);
+  ctx.restore();
+  return w;
+}
+function check(x, y, s, color, alpha) {
+  ctx.save();
+  ctx.globalAlpha *= alpha == null ? 1 : alpha;
+  ctx.strokeStyle = color || '#10b981';
+  ctx.lineWidth = s / 4;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x, y + s * 0.5);
+  ctx.lineTo(x + s * 0.4, y + s * 0.9);
+  ctx.lineTo(x + s, y);
+  ctx.stroke();
+  ctx.restore();
+}
+function bar(x, y, w, h, p, color, track) {
+  ctx.save();
+  ctx.fillStyle = track || '#e5e7eb';
+  rr(x, y, w, h, h / 2); ctx.fill();
+  if (p > 0) { ctx.fillStyle = color || '#f59e0b'; rr(x, y, Math.max(h, w * clamp(p, 0, 1)), h, h / 2); ctx.fill(); }
+  ctx.restore();
+}
+function typed(s, p) { return s.slice(0, Math.round(s.length * clamp(p, 0, 1))); }
+function bg() {
+  const g = ctx.createLinearGradient(0, 0, W, H);
+  g.addColorStop(0, '#0b1220');
+  g.addColorStop(1, '#15233f');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.globalAlpha = 0.05;
+  ctx.strokeStyle = '#94a3b8';
+  for (let i = 1; i < 12; i++) { ctx.beginPath(); ctx.moveTo(i * W / 12, 0); ctx.lineTo(i * W / 12, H); ctx.stroke(); }
+  ctx.restore();
+}
+// 通用 PDF 页面缩略图（标题 + 文字行 + 柱状图）
+function pageMock(x, y, w, h, alpha, chartP) {
+  panel(x, y, w, h, { alpha, r: 10 });
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.fillStyle = '#111827';
+  ctx.fillRect(x + w * 0.08, y + h * 0.06, w * 0.6, h * 0.045);
+  ctx.fillStyle = '#cbd5e1';
+  for (let i = 0; i < 3; i++) ctx.fillRect(x + w * 0.08, y + h * (0.16 + i * 0.05), w * (0.84 - i * 0.1), h * 0.022);
+  const bx = x + w * 0.14, by = y + h * 0.82, bw = w * 0.12, hs = [0.28, 0.42, 0.34, 0.5];
+  hs.forEach((bh, i) => {
+    ctx.fillStyle = ['#3b82f6', '#f59e0b', '#10b981', '#8b5cf6'][i];
+    const hh = h * bh * (chartP == null ? 1 : chartP);
+    ctx.fillRect(bx + i * bw * 1.45, by - hh, bw, hh);
+  });
+  ctx.strokeStyle = '#9ca3af';
+  ctx.beginPath(); ctx.moveTo(x + w * 0.1, by); ctx.lineTo(x + w * 0.9, by); ctx.stroke();
+  ctx.fillStyle = '#6b7280';
+  ctx.fillRect(x + w * 0.1, y + h * 0.88, w * 0.5, h * 0.02);
+  ctx.restore();
+}
+// 通用 PPT 幻灯片缩略图
+function slideMock(x, y, w, h, title, alpha, highlight) {
+  panel(x, y, w, h, { alpha, r: 12 });
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  if (highlight) {
+    ctx.fillStyle = '#fff200';
+    const tw = Math.min(w * 0.86, ctx.measureText(title).width + w * 0.3);
+    ctx.fillRect(x + w / 2 - tw / 2, y + h * 0.12, tw, h * 0.16);
+  }
+  txt(title, x + w / 2, y + h * 0.24, { size: w * 0.052, weight: 'bold', align: 'center', color: '#111827' });
+  const bx = x + w * 0.22, by = y + h * 0.84, bw = w * 0.1;
+  [0.3, 0.46, 0.38].forEach((bh, i) => {
+    ctx.fillStyle = ['#2563eb', '#f59e0b', '#10b981'][i];
+    ctx.fillRect(bx + i * bw * 1.8, by - h * bh, bw, h * bh);
+  });
+  if (highlight) {
+    ctx.fillStyle = '#fff200';
+    ctx.fillRect(x + w * 0.18, y + h * 0.4, w * 0.64, h * 0.08);
+    ctx.fillStyle = '#111827';
+    ctx.font = `${w * 0.03}px "Segoe UI","Microsoft YaHei",sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('Hocheffizientes Stromversorgungssystem', x + w / 2, y + h * 0.455);
+  } else {
+    txt('高效供电系统 · 智能监控平台', x + w / 2, y + h * 0.46, { size: w * 0.03, align: 'center', color: '#374151' });
+  }
+  ctx.restore();
+}
+
+// ---------- 场景 ----------
+const SCENES = [
+{ dur: 10, sub: '一个可直接部署到 Vercel 的多格式翻译工作台：CSV、PDF、PPTX 一站式多语言翻译', draw(p) {
+  txt('Digital Power', W / 2, 300 + (1 - seg(p, 0, 0.2)) * 50, { size: 64, weight: 'bold', color: '#f59e0b', align: 'center', alpha: seg(p, 0, 0.2) });
+  txt('多格式翻译工作台', W / 2, 420 + (1 - seg(p, 0.08, 0.3)) * 50, { size: 110, weight: 'bold', color: '#f8fafc', align: 'center', alpha: seg(p, 0.08, 0.3) });
+  txt('三轮翻译审校工作流：初译 → 建议 → 改译', W / 2, 510, { size: 36, color: '#94a3b8', align: 'center', alpha: seg(p, 0.2, 0.38) });
+  const cards = [['CSV', '批量表格翻译', '#3b82f6'], ['PDF', '资料阅读翻译', '#10b981'], ['PPTX', '版面保真翻译', '#f59e0b']];
+  cards.forEach((c, i) => {
+    const a = seg(p, 0.38 + i * 0.08, 0.5 + i * 0.08);
+    const x = W / 2 - 560 + i * 400, y = 590 + (1 - a) * 40;
+    panel(x, y, 320, 200, { alpha: a });
+    txt(c[0], x + 160, y + 95, { size: 56, weight: 'bold', color: c[2], align: 'center', alpha: a });
+    txt(c[1], x + 160, y + 150, { size: 30, color: '#4b5563', align: 'center', alpha: a });
+  });
+  const langs = ['German', 'French', 'Spanish', 'Italian', 'Dutch', 'Polish', 'Portuguese', 'Swedish', 'Ukrainian'];
+  let lx = W / 2 - 740;
+  langs.forEach((s, i) => { lx += chip(s, lx, 880, { alpha: seg(p, 0.62 + i * 0.03, 0.72 + i * 0.03) }) + 18; });
+  txt('… 默认 18 种语言，可自定义添加', W / 2, 990, { size: 28, color: '#64748b', align: 'center', alpha: seg(p, 0.85, 0.95) });
+} },
+{ dur: 10, sub: '第一步：填写模型配置，点击连通测试确认模型可用', draw(p) {
+  txt('STEP 1 · 模型配置', 160, 160, { size: 48, weight: 'bold', color: '#f59e0b', alpha: seg(p, 0, 0.12) });
+  const a = seg(p, 0.05, 0.2);
+  panel(160, 220, 1100, 640, { alpha: a });
+  const rows = [['Provider', 'AIHubMix'], ['Base URL', 'https://aihubmix.com/v1'], ['API Key', '••••••••••••••••'], ['模型 ID', 'gpt-5.4']];
+  rows.forEach((r, i) => {
+    const ra = seg(p, 0.15 + i * 0.1, 0.25 + i * 0.1);
+    const y = 300 + i * 120;
+    txt(r[0], 220, y + 45, { size: 30, color: '#6b7280', alpha: ra });
+    ctx.save(); ctx.globalAlpha = ra; ctx.fillStyle = '#f3f4f6'; rr(440, y, 760, 70, 10); ctx.fill(); ctx.restore();
+    txt(typed(r[1], seg(p, 0.18 + i * 0.1, 0.32 + i * 0.1)), 470, y + 46, { size: 30, color: '#111827', alpha: ra });
+  });
+  const ba = seg(p, 0.62, 0.7);
+  const pressed = p > 0.72 && p < 0.78 ? 4 : 0;
+  ctx.save(); ctx.globalAlpha = ba; ctx.fillStyle = '#f59e0b'; rr(440, 780 + pressed, 260, 64, 12); ctx.fill(); ctx.restore();
+  txt('连通测试', 570, 822 + pressed, { size: 30, weight: '600', color: '#1f2937', align: 'center', alpha: ba });
+  const ok = seg(p, 0.8, 0.9);
+  if (ok > 0) {
+    ctx.save(); ctx.globalAlpha = ok; ctx.fillStyle = '#d1fae5'; rr(740, 780, 380, 64, 12); ctx.fill(); ctx.restore();
+    check(770, 798, 30, '#059669', ok);
+    txt('连接成功，模型可用', 825, 822, { size: 28, color: '#065f46', alpha: ok });
+  }
+  txt('支持任意 OpenAI 兼容接口', 1340, 480, { size: 38, color: '#cbd5e1', alpha: seg(p, 0.4, 0.55) });
+  txt('内置 AIHubMix / 智谱 / Kimi 预设', 1340, 545, { size: 30, color: '#94a3b8', alpha: seg(p, 0.5, 0.65) });
+  txt('调用经 /api/* 代理转发', 1340, 605, { size: 30, color: '#94a3b8', alpha: seg(p, 0.6, 0.75) });
+} },
+{ dur: 11, sub: '第二步：上传标准翻译库、设置术语保护，勾选目标语言——对三种翻译全部生效', draw(p) {
+  txt('STEP 2 · 共享翻译规则', 160, 160, { size: 48, weight: 'bold', color: '#f59e0b', alpha: seg(p, 0, 0.12) });
+  const a1 = seg(p, 0.08, 0.22);
+  panel(140, 230, 520, 620, { alpha: a1 });
+  txt('标准翻译库', 190, 310, { size: 34, weight: '600', alpha: a1 });
+  ctx.save(); ctx.globalAlpha = seg(p, 0.18, 0.3); ctx.fillStyle = '#eff6ff'; rr(190, 350, 420, 70, 10); ctx.fill(); ctx.restore();
+  txt('📄 glossary.csv（1,024 条）', 215, 396, { size: 28, color: '#1d4ed8', alpha: seg(p, 0.18, 0.3) });
+  txt('命中时：', 190, 490, { size: 28, color: '#6b7280', alpha: seg(p, 0.26, 0.36) });
+  chip('直接使用标准译文', 190, 515, { bg: '#fef3c7', color: '#92400e', alpha: seg(p, 0.3, 0.4) });
+  txt('不调用模型 · 零成本', 190, 630, { size: 26, color: '#9ca3af', alpha: seg(p, 0.34, 0.44) });
+  const a2 = seg(p, 0.3, 0.44);
+  panel(700, 230, 520, 620, { alpha: a2 });
+  txt('术语保护', 750, 310, { size: 34, weight: '600', alpha: a2 });
+  ['Digital Power', 'SmartLi', 'FusionSolar', 'PowerPOD'].forEach((s, i) => {
+    chip(s, 750, 350 + i * 80, { bg: '#fee2e2', color: '#991b1b', alpha: seg(p, 0.38 + i * 0.05, 0.48 + i * 0.05) });
+  });
+  txt('译文缺失术语将标 Warning', 750, 720, { size: 26, color: '#9ca3af', alpha: seg(p, 0.55, 0.65) });
+  const a3 = seg(p, 0.5, 0.62);
+  panel(1260, 230, 520, 620, { alpha: a3 });
+  txt('目标语言', 1310, 310, { size: 34, weight: '600', alpha: a3 });
+  const langs = ['German', 'French', 'Spanish', 'Italian', 'Polish', 'Dutch'];
+  langs.forEach((s, i) => {
+    const y = 350 + i * 78;
+    const la = seg(p, 0.58 + i * 0.05, 0.68 + i * 0.05);
+    ctx.save(); ctx.globalAlpha = la; ctx.strokeStyle = '#d1d5db'; ctx.lineWidth = 3; rr(1310, y, 44, 44, 8); ctx.stroke(); ctx.restore();
+    check(1320, y + 10, 24, '#10b981', seg(p, 0.62 + i * 0.05, 0.7 + i * 0.05));
+    txt(s, 1380, y + 33, { size: 30, alpha: la });
+  });
+} },
+{ dur: 12, sub: 'CSV 批量翻译：上传文件、选择原文列，并发翻译后导出宽表或长表', draw(p) {
+  txt('CSV 批量翻译', 160, 160, { size: 48, weight: 'bold', color: '#f59e0b', alpha: seg(p, 0, 0.1) });
+  const drop = seg(p, 0.06, 0.2);
+  panel(160, 230 + (1 - drop) * -60, 700, 130, { alpha: drop });
+  txt('📄 products.csv', 210, 290 + (1 - drop) * -60, { size: 34, weight: '600', alpha: drop });
+  txt('1,280 行 · UTF-8', 210, 335 + (1 - drop) * -60, { size: 26, color: '#6b7280', alpha: drop });
+  const map = seg(p, 0.2, 0.34);
+  panel(160, 400, 700, 180, { alpha: map });
+  txt('原文列', 210, 470, { size: 28, color: '#6b7280', alpha: map });
+  chip('text ▾', 340, 438, { bg: '#eef2ff', color: '#3730a3', alpha: map });
+  txt('国家列', 210, 545, { size: 28, color: '#6b7280', alpha: map });
+  chip('country ▾', 340, 513, { bg: '#eef2ff', color: '#3730a3', alpha: map });
+  txt('工作流：完整 DSL（初译 → 建议 → 改译）', 560, 470, { size: 26, color: '#374151', alpha: seg(p, 0.26, 0.38) });
+  txt('并发 3 · 失败重试 1', 560, 545, { size: 26, color: '#374151', alpha: seg(p, 0.3, 0.42) });
+  const run = seg(p, 0.4, 0.78);
+  panel(160, 640, 700, 160, { alpha: seg(p, 0.36, 0.46) });
+  txt('翻译进度', 210, 705, { size: 28, color: '#6b7280', alpha: seg(p, 0.36, 0.46) });
+  bar(210, 730, 600, 26, run, '#f59e0b');
+  txt(`${Math.round(run * 1280)} / 1280`, 810, 712, { size: 28, color: '#374151', align: 'right', alpha: seg(p, 0.4, 0.5) });
+  const done = seg(p, 0.8, 0.92);
+  ['⬇ 宽表 CSV（生成结果_German…）', '⬇ 长表 CSV（target_lang + translation）'].forEach((s, i) => {
+    ctx.save(); ctx.globalAlpha = done; ctx.fillStyle = i ? '#1e293b' : '#10b981'; rr(160, 850 + i * 90, 760, 70, 12); ctx.fill(); ctx.restore();
+    txt(s, 200, 896 + i * 90, { size: 28, color: i ? '#e2e8f0' : '#052e16', alpha: done });
+  });
+  panel(1020, 280, 760, 560, { alpha: seg(p, 0.45, 0.58) });
+  txt('生成结果预览', 1070, 350, { size: 30, weight: '600', alpha: seg(p, 0.45, 0.58) });
+  const rows = [['智能光伏逆变器', 'Intelligenter PV-Wechselrichter'], ['高效供电系统', 'Hocheffizientes Stromsystem'], ['全栈数据中心', 'Full-Stack-Rechenzentrum'], ['模块化电源', 'Modulare Stromversorgung']];
+  rows.forEach((r, i) => {
+    const ra = seg(p, 0.5 + i * 0.08, 0.62 + i * 0.08);
+    txt(r[0], 1070, 430 + i * 95, { size: 28, color: '#374151', alpha: ra });
+    txt(r[1], 1070, 468 + i * 95, { size: 28, color: '#059669', alpha: ra });
+  });
+} },
+{ dur: 15, sub: 'PDF 翻译：自动抽取文本（不足时 OCR），三轮工作流精译；图文对照 HTML 保留图表原貌，点击译文即可定位原文', draw(p) {
+  txt('PDF 翻译 · 资料快速阅读', 160, 160, { size: 48, weight: 'bold', color: '#f59e0b', alpha: seg(p, 0, 0.08) });
+  if (p < 0.42) {
+    const a = seg(p, 0.04, 0.16);
+    pageMock(200, 240, 520, 680, a, seg(p, 0.1, 0.3));
+    const steps = ['文字抽取（保留坐标）', '不足 24 字符 → OCR 回退', '初译 → 建议 → 改译'];
+    steps.forEach((s, i) => {
+      const sa = seg(p, 0.16 + i * 0.07, 0.26 + i * 0.07);
+      txt('→', 800, 480 + i * 110, { size: 44, color: '#f59e0b', alpha: sa });
+      chip(s, 880, 440 + i * 110, { size: 30, bg: '#1e293b', alpha: sa });
+    });
+    txt('analyst-report.pdf · 24 页', 200, 970, { size: 28, color: '#94a3b8', alpha: a });
+  } else {
+    const a = seg(p, 0.42, 0.52);
+    txt('输出：图文对照 HTML', 200, 250, { size: 38, weight: '600', color: '#e2e8f0', alpha: a });
+    pageMock(200, 300, 560, 700, a, 1);
+    const hl = seg(p, 0.74, 0.84);
+    if (hl > 0) {
+      ctx.save(); ctx.globalAlpha = hl;
+      ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 5;
+      ctx.fillStyle = 'rgba(245,158,11,.2)';
+      rr(200 + 560 * 0.1, 300 + 700 * 0.86, 560 * 0.52, 700 * 0.05, 6); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+    const blocks = [['Der Umsatz stieg im dritten Quartal stark an …', false], ['Abbildung 3: Umsatz nach Region (Mrd. USD)', true], ['Quelle: Analystenbericht, Q3 2026', false]];
+    blocks.forEach((b, i) => {
+      const ba = seg(p, 0.5 + i * 0.08, 0.6 + i * 0.08);
+      const active = b[1] && hl > 0;
+      panel(860, 320 + i * 200, 880, 160, { alpha: ba, fill: active ? '#fffbeb' : '#ffffff' });
+      ctx.save(); ctx.globalAlpha = ba; ctx.fillStyle = active ? '#f59e0b' : '#e5e7eb'; ctx.fillRect(860, 320 + i * 200, 8, 160); ctx.restore();
+      txt(`第 1 页 · 块 ${i + 1}`, 910, 370 + i * 200, { size: 24, color: '#9ca3af', alpha: ba });
+      txt(b[0], 910, 425 + i * 200, { size: 30, color: '#111827', alpha: ba });
+      txt('▸ 原文', 910, 462 + i * 200, { size: 24, color: '#6b7280', alpha: ba });
+    });
+    if (hl > 0) txt('点击译文块 → 原文位置高亮', 1300, 960, { size: 32, color: '#f59e0b', align: 'center', alpha: hl });
+    txt('图表 · 版面 100% 原貌', 480, 1040, { size: 30, color: '#94a3b8', align: 'center', alpha: a });
+  }
+} },
+{ dur: 12, sub: 'PPTX 翻译：原始页保留，每页后插入高亮译文页，字号与排版位置 100% 保真', draw(p) {
+  txt('PPTX 翻译 · 版面保真', 160, 160, { size: 48, weight: 'bold', color: '#f59e0b', alpha: seg(p, 0, 0.1) });
+  const a1 = seg(p, 0.08, 0.22);
+  slideMock(170, 280, 760, 480, '数字能源解决方案', a1, false);
+  txt('原始页（保留不动）', 550, 820, { size: 30, color: '#94a3b8', align: 'center', alpha: a1 });
+  const a2 = seg(p, 0.3, 0.48);
+  const sx = lerp(W + 100, 990, a2);
+  slideMock(sx, 280, 760, 480, 'Digital Power Solutions', a2, true);
+  txt('新增译文页（黄色高亮）', 1370, 820, { size: 30, color: '#94a3b8', align: 'center', alpha: seg(p, 0.45, 0.55) });
+  const tags = ['字号 100% 一致', '位置 100% 一致', '译文不换行 · 居中对齐保持'];
+  tags.forEach((s, i) => {
+    const ta = seg(p, 0.58 + i * 0.1, 0.7 + i * 0.1);
+    check(560 + i * 320, 905, 30, '#10b981', ta);
+    txt(s, 610 + i * 320, 930, { size: 30, color: '#e2e8f0', alpha: ta });
+  });
+  txt('10 页原稿 → 输出 20 页：原页与译文页一一相邻，审校直接左右翻页对照', W / 2, 1020, { size: 28, color: '#64748b', align: 'center', alpha: seg(p, 0.85, 0.95) });
+} },
+{ dur: 8, sub: '导入仓库即可部署，无需构建。现在就开始你的多语言翻译工作流', draw(p) {
+  txt('立即开始', W / 2, 420 + (1 - seg(p, 0, 0.25)) * 40, { size: 110, weight: 'bold', color: '#f8fafc', align: 'center', alpha: seg(p, 0, 0.25) });
+  const ba = seg(p, 0.3, 0.45);
+  ctx.save(); ctx.globalAlpha = ba; ctx.fillStyle = '#f59e0b'; rr(W / 2 - 260, 500, 520, 90, 16); ctx.fill(); ctx.restore();
+  txt('Deploy to Vercel · 无需构建', W / 2, 558, { size: 36, weight: '600', color: '#1f2937', align: 'center', alpha: ba });
+  txt('github.com/Shawn-Skywolfer/MultipleLanguageTranslator', W / 2, 690, { size: 34, color: '#94a3b8', align: 'center', alpha: seg(p, 0.45, 0.6) });
+  txt('中文 / English 界面 · CSV · PDF · PPTX · 18+ 目标语言', W / 2, 760, { size: 30, color: '#64748b', align: 'center', alpha: seg(p, 0.55, 0.7) });
+} },
+];
+const TOTAL = SCENES.reduce((s, x) => s + x.dur, 0);
+
+// ---------- 渲染 ----------
+function render(t) {
+  bg();
+  let acc = 0, idx = SCENES.length - 1, local = 1;
+  for (let i = 0; i < SCENES.length; i++) {
+    if (t < acc + SCENES[i].dur) { idx = i; local = (t - acc) / SCENES[i].dur; break; }
+    acc += SCENES[i].dur;
+  }
+  const scene = SCENES[idx];
+  // 场景淡入淡出
+  const fade = Math.min(1, local * scene.dur / 0.5, (1 - local) * scene.dur / 0.5);
+  ctx.save();
+  ctx.globalAlpha = clamp(fade, 0, 1);
+  scene.draw(clamp(local, 0, 1));
+  ctx.restore();
+  // 底部字幕条
+  ctx.fillStyle = 'rgba(2,6,23,.72)';
+  ctx.fillRect(0, H - 110, W, 110);
+  txt(scene.sub, W / 2, H - 48, { size: 32, color: '#f1f5f9', align: 'center' });
+  SCENES.forEach((s, i) => {
+    ctx.fillStyle = i === idx ? '#f59e0b' : 'rgba(148,163,184,.4)';
+    ctx.beginPath();
+    ctx.arc(W / 2 - (SCENES.length - 1) * 14 + i * 28, H - 92, 6, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+// ---------- 播放控制 ----------
+let playing = false, startStamp = 0, offset = 0, raf = 0, recorder = null;
+const status = document.getElementById('status');
+const btnPlay = document.getElementById('btnPlay');
+const btnReplay = document.getElementById('btnReplay');
+const btnExport = document.getElementById('btnExport');
+function now() { return performance.now() / 1000; }
+function tick() {
+  const t = playing ? now() - startStamp + offset : offset;
+  render(Math.min(t, TOTAL));
+  if (playing) {
+    status.textContent = `${recorder ? '⏺ 录制中 ' : '播放中 '}${Math.min(t, TOTAL).toFixed(0)}s / ${TOTAL}s`;
+    if (t >= TOTAL) {
+      playing = false;
+      offset = TOTAL;
+      btnPlay.textContent = '▶ 播放';
+      status.textContent = recorder ? '正在生成视频文件…' : `播放完毕 · 全片 ${TOTAL} 秒`;
+      if (recorder) { const r = recorder; recorder = null; setTimeout(() => r.stop(), 300); }
+    }
+  }
+  raf = requestAnimationFrame(tick);
+}
+function play(fromStart) {
+  if (fromStart || offset >= TOTAL) offset = 0;
+  startStamp = now();
+  playing = true;
+  btnPlay.textContent = '⏸ 暂停';
+}
+btnPlay.addEventListener('click', () => {
+  if (recorder) return;
+  if (playing) { offset += now() - startStamp; playing = false; btnPlay.textContent = '▶ 播放'; status.textContent = '已暂停'; }
+  else play(false);
+});
+btnReplay.addEventListener('click', () => { if (!recorder) play(true); });
+btnExport.addEventListener('click', () => {
+  if (recorder) return;
+  if (!('MediaRecorder' in window)) { alert('当前浏览器不支持 MediaRecorder，请使用 Chrome / Edge。'); return; }
+  const stream = cv.captureStream(30);
+  const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+  recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8000000 });
+  const chunks = [];
+  recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  recorder.onstop = () => {
+    const blob = new Blob(chunks, { type: 'video/webm' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'digital-power-tutorial.webm';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    btnPlay.disabled = btnReplay.disabled = btnExport.disabled = false;
+    status.textContent = '视频已导出：digital-power-tutorial.webm';
+  };
+  btnPlay.disabled = btnReplay.disabled = btnExport.disabled = true;
+  recorder.start();
+  play(true);
+});
+render(0);
+play(true);
+tick();
+</script>
+</body>
+</html>
