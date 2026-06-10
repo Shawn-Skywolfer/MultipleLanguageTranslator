@@ -822,6 +822,7 @@ function groupPdfTextItems(items) {
     text: String(item.str || '').replace(/\s+/g, ' ').trim(),
     x: item.transform?.[4] || 0,
     y: item.transform?.[5] || 0,
+    w: Math.abs(item.width || 0),
     h: Math.abs(item.height || item.transform?.[0] || 10),
   })).filter(item => item.text);
   normalized.sort((a, b) => Math.abs(a.y - b.y) < 3 ? a.x - b.x : b.y - a.y);
@@ -829,10 +830,12 @@ function groupPdfTextItems(items) {
   for (const token of normalized) {
     const last = lines[lines.length - 1];
     if (!last || Math.abs(last.y - token.y) > Math.max(4, token.h * 0.6)) {
-      lines.push({ y: token.y, height: token.h, parts:[token.text] });
+      lines.push({ y: token.y, height: token.h, parts:[token.text], x0: token.x, x1: token.x + token.w });
     } else {
       last.parts.push(token.text);
       last.height = Math.max(last.height, token.h);
+      last.x0 = Math.min(last.x0, token.x);
+      last.x1 = Math.max(last.x1, token.x + token.w);
     }
   }
   const blocks = [];
@@ -841,14 +844,20 @@ function groupPdfTextItems(items) {
     const text = line.parts.join(' ').replace(/\s+/g, ' ').trim();
     if (!text) return;
     if (!current || Math.abs(current.prevY - line.y) > Math.max(14, line.height * 1.8)) {
-      current = { texts:[text], prevY: line.y };
+      current = { texts:[text], prevY: line.y, x0: line.x0, x1: line.x1, y0: line.y, y1: line.y + line.height };
       blocks.push(current);
     } else {
       current.texts.push(text);
       current.prevY = line.y;
+      current.x0 = Math.min(current.x0, line.x0);
+      current.x1 = Math.max(current.x1, line.x1);
+      current.y0 = Math.min(current.y0, line.y);
+      current.y1 = Math.max(current.y1, line.y + line.height);
     }
   });
-  return blocks.map((block, index) => ({ id:`text-${index + 1}`, text:block.texts.join('\n').trim() })).filter(block => isLikelyText(block.text));
+  return blocks
+    .map((block, index) => ({ id:`text-${index + 1}`, text:block.texts.join('\n').trim(), bbox:{ x0:block.x0, y0:block.y0, x1:block.x1, y1:block.y1 } }))
+    .filter(block => isLikelyText(block.text));
 }
 function splitOcrText(text) {
   return String(text || '').split(/\n{2,}/).map(part => part.replace(/[ \t]+/g, ' ').replace(/\n/g, ' ').trim()).filter(isLikelyText);
@@ -867,20 +876,23 @@ function getOcrLanguage(sourceLang) {
   if (sourceLang === 'English') return 'eng';
   return 'eng+chi_sim';
 }
-async function extractPdfDocument(file, sourceLang) {
+async function extractPdfDocument(file, sourceLang, options) {
+  const captureImage = !!(options && options.captureImage);
   log('documentLog', `开始解析 PDF：${file.name}`);
   const pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
   const pages = [];
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 1 });
     const textContent = await page.getTextContent();
     let blocks = groupPdfTextItems(textContent.items || []);
     let extraction = 'text';
+    let pageCanvas = null;
     if (!blocks.length || blocks.map(item => item.text).join(' ').length < 24) {
       extraction = 'ocr';
       log('documentLog', `第 ${i} 页文本不足，开始 OCR...`);
-      const canvas = await renderPdfPageToCanvas(page, 2);
-      const result = await window.Tesseract.recognize(canvas, getOcrLanguage(sourceLang), {
+      pageCanvas = await renderPdfPageToCanvas(page, 2);
+      const result = await window.Tesseract.recognize(pageCanvas, getOcrLanguage(sourceLang), {
         logger: msg => {
           if (msg.status === 'recognizing text' && typeof msg.progress === 'number') {
             $('documentProgressText').textContent = `OCR 第 ${i} 页：${Math.round(msg.progress * 100)}%`;
@@ -889,7 +901,12 @@ async function extractPdfDocument(file, sourceLang) {
       });
       blocks = splitOcrText(result.data.text).map((text, index) => ({ id:`ocr-${index + 1}`, text }));
     }
-    pages.push({ pageNo:i, extraction, blocks });
+    let image = '';
+    if (captureImage) {
+      if (!pageCanvas) pageCanvas = await renderPdfPageToCanvas(page, 1.6);
+      image = pageCanvas.toDataURL('image/jpeg', 0.82);
+    }
+    pages.push({ pageNo:i, extraction, blocks, width:viewport.width, height:viewport.height, image });
   }
   log('documentLog', `PDF 解析完成：${file.name}，共 ${pages.length} 页。`);
   return { type:'pdf', name:file.name, pages };
@@ -1228,6 +1245,93 @@ async function buildPdfDocx(doc, lang, results) {
   });
   const docxFile = new d.Document({ sections:[{ children }] });
   return await d.Packer.toBlob(docxFile);
+}
+function pdfBlockRectStyle(block, page) {
+  if (!block.bbox || !page.width || !page.height) return '';
+  const clamp = value => Math.min(100, Math.max(0, value));
+  const left = clamp(block.bbox.x0 / page.width * 100);
+  const top = clamp((page.height - block.bbox.y1) / page.height * 100);
+  const width = clamp((block.bbox.x1 - block.bbox.x0) / page.width * 100);
+  const height = clamp((block.bbox.y1 - block.bbox.y0) / page.height * 100);
+  return `left:${left.toFixed(2)}%;top:${top.toFixed(2)}%;width:${Math.max(width, 0.5).toFixed(2)}%;height:${Math.max(height, 0.5).toFixed(2)}%`;
+}
+function buildPdfComparisonHtml(doc, lang, results) {
+  const out = [];
+  out.push('<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8" />');
+  out.push(`<title>${escapeHtml(doc.name)} - ${escapeHtml(lang)} 图文对照</title>`);
+  out.push('<meta name="viewport" content="width=device-width, initial-scale=1" />');
+  out.push('<style>');
+  out.push('body{margin:0;font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:#f3f4f6;color:#111827;}');
+  out.push('header{position:sticky;top:0;z-index:10;background:#111827;color:#f9fafb;padding:10px 20px;font-size:14px;display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;}');
+  out.push('header b{font-size:16px;}header span{opacity:.75;}');
+  out.push('.page{max-width:1500px;margin:20px auto;padding:0 16px;}');
+  out.push('.page-title{font-size:15px;font-weight:600;margin:0 0 8px;display:flex;gap:8px;align-items:center;}');
+  out.push('.badge{font-size:11px;background:#fde68a;color:#92400e;border-radius:999px;padding:1px 8px;font-weight:500;}');
+  out.push('.layout{display:flex;gap:14px;align-items:flex-start;}');
+  out.push('.preview{flex:0 0 55%;position:sticky;top:52px;}');
+  out.push('.canvasWrap{position:relative;border:1px solid #d1d5db;border-radius:6px;overflow:hidden;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.08);}');
+  out.push('.canvasWrap img{display:block;width:100%;}');
+  out.push('.noimg{padding:48px 16px;text-align:center;color:#6b7280;font-size:13px;}');
+  out.push('.hl{position:absolute;border:2px solid transparent;border-radius:3px;pointer-events:none;transition:all .15s;}');
+  out.push('.hl.active{border-color:#f59e0b;background:rgba(245,158,11,.18);box-shadow:0 0 0 3px rgba(245,158,11,.25);}');
+  out.push('.blocks{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;}');
+  out.push('.block{background:#fff;border:1px solid #e5e7eb;border-left:4px solid #e5e7eb;border-radius:6px;padding:10px 12px;cursor:pointer;}');
+  out.push('.block.active{border-left-color:#f59e0b;background:#fffbeb;}');
+  out.push('.block .num{display:inline-block;font-size:11px;color:#6b7280;background:#f3f4f6;border-radius:999px;padding:0 8px;margin-bottom:6px;}');
+  out.push('.block .tr{white-space:pre-wrap;font-size:14px;line-height:1.65;}');
+  out.push('.block details{margin-top:8px;font-size:12px;color:#6b7280;}');
+  out.push('.block details pre{white-space:pre-wrap;margin:6px 0 0;font-family:inherit;background:#f9fafb;border-radius:4px;padding:6px 8px;}');
+  out.push('.block .warn{margin-top:6px;font-size:12px;color:#b45309;}');
+  out.push('.block .err{margin-top:6px;font-size:12px;color:#b91c1c;}');
+  out.push('.empty{color:#6b7280;font-size:13px;background:#fff;border:1px dashed #d1d5db;border-radius:6px;padding:14px;}');
+  out.push('@media (max-width: 900px){.layout{flex-direction:column;}.preview{position:static;flex:none;width:100%;}}');
+  out.push('@media print{.preview{position:static;}header{position:static;}}');
+  out.push('</style></head><body>');
+  out.push(`<header><b>${escapeHtml(doc.name)}</b><span>译文语言：${escapeHtml(lang)}</span><span>共 ${doc.pages.length} 页</span><span>点击右侧译文块可在左侧原文页上高亮对应位置</span></header>`);
+  doc.pages.forEach(page => {
+    out.push('<section class="page">');
+    out.push(`<h2 class="page-title">第 ${page.pageNo} 页${page.extraction === 'ocr' ? '<span class="badge">OCR 页</span>' : ''}</h2>`);
+    out.push('<div class="layout">');
+    out.push('<div class="preview"><div class="canvasWrap">');
+    if (page.image) {
+      out.push(`<img src="${page.image}" alt="第 ${page.pageNo} 页原文" loading="lazy" />`);
+      page.blocks.forEach((block, index) => {
+        const style = pdfBlockRectStyle(block, page);
+        if (style) out.push(`<div class="hl" id="hl-p${page.pageNo}-b${index}" style="${style}"></div>`);
+      });
+    } else {
+      out.push('<div class="noimg">本页未生成原文截图。</div>');
+    }
+    out.push('</div></div>');
+    out.push('<div class="blocks">');
+    if (!page.blocks.length) {
+      out.push('<div class="empty">本页未识别到可翻译文本。</div>');
+    } else {
+      page.blocks.forEach((block, index) => {
+        const item = results.get(`page-${page.pageNo}-block-${index + 1}`) || { text:'', error:'未生成结果', warning:'' };
+        out.push(`<div class="block" data-hl="hl-p${page.pageNo}-b${index}" tabindex="0">`);
+        out.push(`<span class="num">第 ${page.pageNo} 页 · 块 ${index + 1}</span>`);
+        out.push(`<div class="tr">${item.error ? '' : escapeHtml(item.text || '(空)')}</div>`);
+        if (item.error) out.push(`<div class="err">[ERROR] ${escapeHtml(item.error)}</div>`);
+        if (item.warning) out.push(`<div class="warn">${escapeHtml(item.warning)}</div>`);
+        out.push(`<details><summary>原文</summary><pre>${escapeHtml(block.text || '(空)')}</pre></details>`);
+        out.push('</div>');
+      });
+    }
+    out.push('</div></div></section>');
+  });
+  out.push('<script>');
+  out.push('document.addEventListener("click", function (event) {');
+  out.push('  var block = event.target.closest(".block");');
+  out.push('  if (!block) return;');
+  out.push('  var actives = document.querySelectorAll(".active");');
+  out.push('  for (var i = 0; i < actives.length; i++) actives[i].classList.remove("active");');
+  out.push('  block.classList.add("active");');
+  out.push('  var hl = document.getElementById(block.getAttribute("data-hl") || "");');
+  out.push('  if (hl) hl.classList.add("active");');
+  out.push('});');
+  out.push('<\/script></body></html>');
+  return out.join('\n');
 }
 function nextNumericId(values, fallback) {
   const nums = values.map(value => Number(String(value).replace(/^\D+/, ''))).filter(Number.isFinite);
@@ -1613,7 +1717,7 @@ async function runDocumentTranslate() {
     alert('请先填写 API Key，或上传标准翻译库并选择命中后直接使用。');
     return;
   }
-  if (!$('docOutputMarkdown').checked && !$('docOutputDocx').checked && !state.documentFiles.some(item => /\.pptx$/i.test(item.name))) {
+  if (!$('docOutputMarkdown').checked && !$('docOutputDocx').checked && !$('docOutputHtml').checked && !state.documentFiles.some(item => /\.pptx$/i.test(item.name))) {
     alert('PDF 至少需要勾选一种输出格式。');
     return;
   }
@@ -1635,12 +1739,12 @@ async function runDocumentTranslate() {
     translationMemoryMode: $('translationMemoryMode').value,
     protectedTerms: sharedRules.protectedTerms,
     customRules: sharedRules.customRules,
-    outputs: { markdown: $('docOutputMarkdown').checked, docx: $('docOutputDocx').checked },
+    outputs: { markdown: $('docOutputMarkdown').checked, docx: $('docOutputDocx').checked, html: $('docOutputHtml').checked },
   };
   const parsedDocuments = [];
   let total = 0;
   for (const item of state.documentFiles) {
-    const doc = /\.pdf$/i.test(item.name) ? await extractPdfDocument(item.file, meta.sourceLang) : await extractPptxDocument(item.file);
+    const doc = /\.pdf$/i.test(item.name) ? await extractPdfDocument(item.file, meta.sourceLang, { captureImage: meta.outputs.html }) : await extractPptxDocument(item.file);
     parsedDocuments.push({ item, doc });
     total += collectDocumentTasks(doc).length * langs.length;
   }
@@ -1661,6 +1765,10 @@ async function runDocumentTranslate() {
           if (meta.outputs.docx) {
             const blob = await buildPdfDocx(doc, lang, results);
             renderDocumentResult({ name:item.name, lang, kind:'DOCX', status:'ok', message:`${doc.pages.length} 页双语 DOCX`, blob, downloadName:`${fileStem(item.name)}_${lang}.docx` });
+          }
+          if (meta.outputs.html) {
+            const html = buildPdfComparisonHtml(doc, lang, results);
+            renderDocumentResult({ name:item.name, lang, kind:'图文对照 HTML', status:'ok', message:`${doc.pages.length} 页原文截图 + 译文对照`, blob:new Blob([html], { type:'text/html;charset=utf-8' }), downloadName:`${fileStem(item.name)}_${lang}_compare.html` });
           }
         } else {
           const blob = await buildTranslatedPptx(doc, lang, results);

@@ -31,7 +31,7 @@
     '文件': 'File', '状态': 'Status', '任务数': 'Tasks', '说明': 'Details', '下载': 'Download', '还没有 CSV 翻译结果。': 'No CSV translation results yet.',
     '上传文档': 'Upload Documents', '支持 `PDF` 和 `PPTX`。PDF 会优先做文字抽取，文本不足时自动回退到 OCR；PPTX 会保留原始页，并在每页后新增对应的高亮译文页。': 'Supports PDF and PPTX. PDFs use text extraction first and automatically fall back to OCR when needed. PPTX files preserve each original slide and add a highlighted translated slide after it.',
     '上传 PDF / PPTX': 'Upload PDF / PPTX', '也可以把 PDF 或 PPTX 文件拖到这里': 'You can also drop PDF or PPTX files here', '尚未上传文档。': 'No documents uploaded.', '文档翻译参数': 'Document Translation Settings',
-    '导出双语 Markdown（仅 PDF）': 'Export Bilingual Markdown (PDF only)', '导出双语 DOCX（仅 PDF）': 'Export Bilingual DOCX (PDF only)',
+    '导出双语 Markdown（仅 PDF）': 'Export Bilingual Markdown (PDF only)', '导出双语 DOCX（仅 PDF）': 'Export Bilingual DOCX (PDF only)', '导出图文对照 HTML（仅 PDF）': 'Export Side-by-side HTML (PDF only)',
     'PPTX 会输出“原始页保留 + 每页后新增 1 页译文页”的翻译版 PPTX。译文页会直接复用原始幻灯片中的图片、图形元素和文本框位置，只替换对应文本框文字，并用黄色底色、黑色文字高亮。': 'The translated PPTX preserves every original slide and adds one translated slide after it. Translated slides reuse the original images, shapes, and text-box positions, replacing only the text and highlighting it with a yellow background and black type.',
     '开始文档翻译': 'Start Document Translation', '文档翻译结果': 'Document Translation Results', '语言': 'Language', '类型': 'Type', '还没有文档翻译结果。': 'No document translation results yet.',
     '共享翻译规则与目标语言': 'Shared Translation Rules & Target Languages', '标准翻译库（可选）': 'Translation Memory (optional)', '上传标准翻译 CSV': 'Upload Translation Memory CSV', '清空标准库': 'Clear Translation Memory',
