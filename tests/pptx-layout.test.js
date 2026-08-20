@@ -203,4 +203,17 @@ function autofitNames(bodyPr) {
   assert.equal(t2.textContent, 'Intelligente Überwachungsplattform', '第 2 行译文应完整落入第 2 段');
 }
 
+// 8. OOXML 顺序：填充必须位于线条之前，否则 PowerPoint 可能提示修复文件
+{
+  const spPr = el('p:spPr', {}, [el('a:xfrm'), el('a:prstGeom'), el('a:ln')]);
+  const sp = el('p:sp', {}, [
+    el('p:nvSpPr', {}, [el('p:cNvPr', { id: '9' })]),
+    spPr,
+    el('p:txBody', {}, [el('a:bodyPr'), el('a:p', {}, [el('a:r', {}, [el('a:rPr', { sz: '1800' }), el('a:t', {}, [], '原文')])])]),
+  ]);
+  updateTranslatedShape(sp, 'Translation', xmlDoc);
+  const names = spPr.children.map(child => child.localName);
+  assert.ok(names.indexOf('solidFill') < names.indexOf('ln'), `solidFill must precede ln: ${names.join(',')}`);
+}
+
 console.log('pptx layout fidelity checks passed: font sizes, xfrm positions, wrap=none, autofit locking and per-paragraph line mapping verified.');
