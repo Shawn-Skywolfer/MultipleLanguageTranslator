@@ -2,6 +2,11 @@
 'use strict';
 
 const DEFAULT_MODELS = ['gpt-5.4','gpt-4o-mini','gpt-4o','gpt-4.1-mini','claude-3-5-sonnet-latest','claude-sonnet-4-5','gemini-2.5-flash','gemini-2.5-pro','deepseek-chat','deepseek-reasoner','qwen-plus','qwen-max'];
+const MULTIMODAL_MODEL_PATTERNS = [
+  /gpt-4o/i, /gpt-4\.1/i, /gpt-5/i, /o[134](?:-|$)/i,
+  /claude-(?:3|sonnet|opus)/i, /gemini-(?:1\.5|2|3)/i,
+  /qwen.*(?:vl|omni)/i, /glm-4v/i, /kimi.*vision/i,
+];
 const PROVIDER_PRESETS = [
   {name:'AIHubMix', baseUrl:'https://aihubmix.com/v1', model:'gpt-5.4', models:DEFAULT_MODELS},
   {name:'智谱 BigModel', baseUrl:'https://open.bigmodel.cn/api/paas/v4', model:'glm-5.1', models:['glm-5.1','glm-5-turbo','glm-5','glm-4.7','glm-4.7-flash','glm-4.7-flashx','glm-4.6','glm-4.5-air','glm-4.5-airx','glm-4.5-flash','glm-4-flash-250414','glm-4-flashx-250414']},
@@ -246,6 +251,15 @@ function getModelConfig() {
     model: $('modelId').value.trim(),
   };
 }
+function isLikelyMultimodalModel(model) {
+  return MULTIMODAL_MODEL_PATTERNS.some(pattern => pattern.test(String(model || '')));
+}
+function modelSupportsVision() {
+  const mode = $('modelCapability')?.value || 'auto';
+  if (mode === 'vision') return true;
+  if (mode === 'text') return false;
+  return isLikelyMultimodalModel($('modelId').value.trim());
+}
 function getTokenLimitValue() {
   const value = $('maxTokens').value.trim();
   if (!value) return null;
@@ -324,7 +338,10 @@ async function postChatCompletion(body, logId) {
   throw new Error('接口参数兼容重试次数已用完。');
 }
 function stripOutputObject(text) {
-  const raw = String(text ?? '').trim();
+  const normalized = Array.isArray(text)
+    ? text.map(item => typeof item === 'string' ? item : (item?.text || item?.content || '')).join('')
+    : text;
+  const raw = String(normalized ?? '').trim();
   try {
     const obj = JSON.parse(raw);
     if (obj && typeof obj === 'object' && Object.prototype.hasOwnProperty.call(obj, 'output')) return String(obj.output ?? '');
@@ -339,6 +356,47 @@ async function chat(messages, logId) {
   const json = await postChatCompletion(body, logId);
   return stripOutputObject(json.choices?.[0]?.message?.content ?? json.choices?.[0]?.text ?? '');
 }
+function parseJsonResponse(text) {
+  const raw = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  const firstObject = raw.indexOf('{');
+  const lastObject = raw.lastIndexOf('}');
+  const candidate = firstObject >= 0 && lastObject > firstObject ? raw.slice(firstObject, lastObject + 1) : raw;
+  return JSON.parse(candidate);
+}
+function clamp01(value) {
+  return Math.max(0, Math.min(1, Number(value) || 0));
+}
+function normalizeImageRegions(payload) {
+  const regions = Array.isArray(payload?.regions) ? payload.regions : [];
+  return regions.map((region, index) => {
+    const bbox = region?.bbox || {};
+    const x = clamp01(bbox.x);
+    const y = clamp01(bbox.y);
+    const w = clamp01(bbox.w);
+    const h = clamp01(bbox.h);
+    return {
+      id: String(region?.id || `region-${index + 1}`),
+      source: String(region?.source || '').trim(),
+      text: String(region?.translation || region?.text || '').trim(),
+      bbox: { x, y, w: Math.min(w, 1 - x), h: Math.min(h, 1 - y) },
+    };
+  }).filter(region => region.text && region.bbox.w >= 0.01 && region.bbox.h >= 0.008);
+}
+async function translatePptxImageTask(task, targetLang, meta) {
+  if (!modelSupportsVision()) {
+    throw new Error(`图片文字翻译需要多模态模型；当前模型 ${$('modelId').value.trim()} 未标记为多模态。`);
+  }
+  const rulesBlock = formatTranslationRules(meta);
+  const prompt = `Inspect this PowerPoint image and find every meaningful text region. Translate the text from ${meta.sourceLang} to ${targetLang}. Return strict JSON only: {"regions":[{"id":"r1","source":"original text","translation":"translated text","bbox":{"x":0.0,"y":0.0,"w":0.0,"h":0.0}}]}. Coordinates are fractions of image width and height from the top-left. Preserve numbers, units, product names and protected terms. Exclude decorative marks and return an empty regions array when no readable text exists.${rulesBlock ? `\n${rulesBlock}` : ''}`;
+  const out = await chat([
+    { role:'system', content:'You are a precise OCR and translation engine for presentation images. Output valid JSON only.' },
+    { role:'user', content:[
+      { type:'text', text:prompt },
+      { type:'image_url', image_url:{ url:task.imageData, detail:'high' } },
+    ] },
+  ], 'documentLog');
+  return normalizeImageRegions(parseJsonResponse(out));
+}
 function renderModels() {
   const filter = $('modelFilter').value.trim().toLowerCase();
   const list = $('modelList');
@@ -351,7 +409,8 @@ function renderModels() {
   models.forEach(model => {
     const row = document.createElement('div');
     row.className = 'model-item';
-    row.innerHTML = `<span>${escapeHtml(model)}</span><button class="ghost" type="button">使用</button>`;
+    const badge = isLikelyMultimodalModel(model) ? '<span class="status ok">多模态</span>' : '<span class="status pending">文本</span>';
+    row.innerHTML = `<span>${escapeHtml(model)}</span>${badge}<button class="ghost" type="button">使用</button>`;
     row.addEventListener('click', () => {
       $('modelId').value = model;
       log('modelLog', '已选择模型：' + model);
@@ -387,6 +446,7 @@ function saveSettings() {
     modelId: $('modelId').value,
     temperature: $('temperature').value,
     maxTokens: $('maxTokens').value,
+    modelCapability: $('modelCapability').value,
     saveKey: $('saveKey').checked,
     apiKey: $('saveKey').checked ? cleanApiKey($('apiKey').value) : '',
   };
@@ -398,7 +458,7 @@ function loadSettings() {
     const raw = localStorage.getItem('difyDslTranslatorSettings');
     if (!raw) return;
     const data = JSON.parse(raw);
-    ['providerName','baseUrl','modelId','temperature','maxTokens','apiKey'].forEach(key => {
+    ['providerName','baseUrl','modelId','temperature','maxTokens','modelCapability','apiKey'].forEach(key => {
       if (data[key] !== undefined && $(key)) $(key).value = data[key];
     });
     $('saveKey').checked = !!data.saveKey;
@@ -1157,6 +1217,7 @@ async function extractPptxDocument(file) {
       const shapeNodeId = attrAny(idNode, ['id']) || String(shapes.length + 1);
       shapes.push({
         id: `slide-${slideIndex}-shape-${shapeNodeId}`,
+        kind: 'shape',
         shapeNodeId,
         text,
         x: emuToInch(attrAny(off, ['x'])),
@@ -1164,6 +1225,23 @@ async function extractPptxDocument(file) {
         w: Math.max(0.8, emuToInch(attrAny(ext, ['cx']))),
         h: Math.max(0.35, emuToInch(attrAny(ext, ['cy']))),
         fontSize,
+      });
+    });
+    localNameNodes(slideXml, 'graphicFrame').forEach(frame => {
+      const table = firstLocalName(frame, 'tbl');
+      if (!table) return;
+      const frameNodeId = attrAny(firstLocalName(frame, 'cNvPr'), ['id']) || String(shapes.length + 1);
+      localNameNodes(table, 'tc').forEach((cell, cellIndex) => {
+        const txBody = firstLocalName(cell, 'txBody');
+        if (!txBody) return;
+        const paragraphs = Array.from(txBody.children).filter(node => node.localName === 'p')
+          .map(p => localNameNodes(p, 't').map(t => t.textContent || '').join('')).filter(Boolean);
+        const text = paragraphs.join('\n').replace(/\u000b/g, '\n').trim();
+        if (!isLikelyText(text)) return;
+        shapes.push({
+          id: `slide-${slideIndex}-table-${frameNodeId}-cell-${cellIndex}`,
+          kind: 'tableCell', frameNodeId, cellIndex, text,
+        });
       });
     });
     const images = [];
@@ -1177,7 +1255,10 @@ async function extractPptxDocument(file) {
       const ext = xfrm ? firstLocalName(xfrm, 'ext') : null;
       const data = await zipFileToDataUrl(zip, targetPath);
       if (!data) continue;
+      const picNodeId = attrAny(firstLocalName(pic, 'cNvPr'), ['id']) || String(images.length + 1);
       images.push({
+        id: `slide-${slideIndex}-image-${picNodeId}`,
+        kind: 'image', picNodeId, rid, targetPath,
         data,
         x: emuToInch(attrAny(off, ['x'])),
         y: emuToInch(attrAny(off, ['y'])),
@@ -1185,7 +1266,17 @@ async function extractPptxDocument(file) {
         h: Math.max(0.5, emuToInch(attrAny(ext, ['cy']))),
       });
     }
-    slides.push({ index:slideIndex, slidePath, relPath, shapes, images, background });
+    const diagrams = [];
+    for (const [relId, diagramPath] of Object.entries(relMap).filter(([, path]) => /^ppt\/diagrams\/(?:data|drawing)\d+\.xml$/i.test(path))) {
+      if (!zip.file(diagramPath)) continue;
+      const diagramXml = xmlFrom(await zip.file(diagramPath).async('text'));
+      const items = localNameNodes(diagramXml, 't').map((node, nodeIndex) => ({
+        id:`slide-${slideIndex}-diagram-${relId}-text-${nodeIndex}`,
+        kind:'diagram', relId, diagramPath, nodeIndex, text:String(node.textContent || '').trim(),
+      })).filter(item => isLikelyText(item.text));
+      if (items.length) diagrams.push({ relId, diagramPath, items });
+    }
+    slides.push({ index:slideIndex, slidePath, relPath, shapes, images, diagrams, background });
   }
   log('documentLog', `PPTX 解析完成：${file.name}，共 ${slides.length} 页。`);
   return { type:'pptx', name:file.name, width, height, slides, sourceBuffer };
@@ -1197,10 +1288,19 @@ function collectDocumentTasks(doc) {
     return tasks;
   }
   const tasks = [];
-  doc.slides.forEach(slide => slide.shapes.forEach(shape => {
-    const lines = String(shape.text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-    tasks.push({ id:shape.id, source:shape.text, lines });
-  }));
+  doc.slides.forEach(slide => {
+    slide.shapes.forEach(shape => {
+      const lines = String(shape.text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+      tasks.push({ ...shape, id:shape.id, source:shape.text, lines });
+    });
+    (slide.diagrams || []).forEach(diagram => diagram.items.forEach(item => {
+      const lines = String(item.text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+      tasks.push({ ...item, source:item.text, lines });
+    }));
+    if ($('docTranslateImages')?.checked) {
+      slide.images.forEach(image => tasks.push({ ...image, id:image.id, source:'', imageData:image.data }));
+    }
+  });
   return tasks;
 }
 function validatePptxTranslationChecklist(task, translated) {
@@ -1254,6 +1354,12 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
     while (cursor < tasks.length && !state.cancel) {
       const task = tasks[cursor++];
       try {
+        if (task.kind === 'image') {
+          const regions = await withRetry(() => translatePptxImageTask(task, targetLang, meta), meta.retries);
+          results.set(task.id, { regions, text:'', warning:'', error:'' });
+          log('documentLog', `图片识别完成 ${task.id}：${regions.length} 个文字区域。`);
+          continue;
+        }
         const standard = lookupTranslationMemory(task.source, targetLang);
         let translated = '';
         if (standard && meta.translationMemoryMode === 'direct') {
@@ -1303,6 +1409,25 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
   }
   await Promise.all(Array.from({length: meta.concurrency}, () => worker()));
   return results;
+}
+function validatePptxResultCoverage(doc, results, includeImages) {
+  const expected = [];
+  doc.slides.forEach(slide => {
+    slide.shapes.forEach(item => expected.push(item));
+    (slide.diagrams || []).forEach(diagram => diagram.items.forEach(item => expected.push(item)));
+    if (includeImages) slide.images.forEach(item => expected.push(item));
+  });
+  const failures = [];
+  expected.forEach(task => {
+    const result = results.get(task.id);
+    if (!result) failures.push(`${task.id}：缺少翻译结果`);
+    else if (result.error) failures.push(`${task.id}：${result.error}`);
+    else if (task.kind !== 'image' && !String(result.text || '').trim()) failures.push(`${task.id}：译文为空`);
+  });
+  if (failures.length) {
+    throw new Error(`PPTX 完整性检查未通过：${failures.length}/${expected.length} 个对象未成功翻译。为避免输出漏译页面，本次不生成 PPTX。\n${failures.slice(0, 12).join('\n')}`);
+  }
+  return { expected:expected.length, images:expected.filter(item => item.kind === 'image').length };
 }
 function buildPdfMarkdown(doc, lang, results) {
   const lines = [`# ${doc.name} - ${lang} 双语文档`, '', `- 输出语言：${lang}`, `- 页面数：${doc.pages.length}`, ''];
@@ -1668,8 +1793,7 @@ function lockTranslatedBodyLayout(txBody, xmlDoc) {
   }
   if (!hasNoAutofit) setNoAutofit(bodyPr, xmlDoc, null);
 }
-function updateTranslatedShape(sp, translatedText, xmlDoc) {
-  const txBody = firstLocalName(sp, 'txBody');
+function updateTranslatedTextBody(txBody, translatedText, xmlDoc) {
   if (!txBody) return;
   const beforeBlueprint = readShapeBlueprint(txBody);
   const paragraphs = Array.from(txBody.children).filter(child => child.localName === 'p');
@@ -1697,6 +1821,12 @@ function updateTranslatedShape(sp, translatedText, xmlDoc) {
     });
   }
   lockTranslatedBodyLayout(txBody, xmlDoc);
+}
+
+function updateTranslatedShape(sp, translatedText, xmlDoc) {
+  const txBody = firstLocalName(sp, 'txBody');
+  if (!txBody) return;
+  updateTranslatedTextBody(txBody, translatedText, xmlDoc);
 
   let spPr = firstLocalName(sp, 'spPr');
   if (!spPr) {
@@ -1710,7 +1840,121 @@ function updateTranslatedShape(sp, translatedText, xmlDoc) {
   const color = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:srgbClr');
   color.setAttribute('val', 'FFF200');
   fill.appendChild(color);
-  spPr.appendChild(fill);
+  const insertBefore = Array.from(spPr.children).find(child => ['ln', 'effectLst', 'effectDag', 'scene3d', 'sp3d', 'extLst'].includes(child.localName));
+  if (insertBefore) spPr.insertBefore(fill, insertBefore);
+  else spPr.appendChild(fill);
+}
+function randomUint32() {
+  if (window.crypto?.getRandomValues) {
+    const value = new Uint32Array(1);
+    window.crypto.getRandomValues(value);
+    return value[0];
+  }
+  return Math.floor(Math.random() * 0x100000000);
+}
+function randomGuid() {
+  if (window.crypto?.randomUUID) return `{${window.crypto.randomUUID().toUpperCase()}}`;
+  const hex = () => randomUint32().toString(16).padStart(8, '0').toUpperCase();
+  const chars = Array.from(hex() + hex() + hex() + hex());
+  chars[12] = '4';
+  chars[16] = ['8','9','A','B'][randomUint32() % 4];
+  const raw = chars.join('');
+  return `{${raw.slice(0,8)}-${raw.slice(8,12)}-${raw.slice(12,16)}-${raw.slice(16,20)}-${raw.slice(20,32)}}`;
+}
+function regenerateOfficeUniqueIds(xmlDoc) {
+  localNameNodes(xmlDoc, 'creationId').forEach(node => {
+    if (node.hasAttribute('id')) node.setAttribute('id', randomGuid());
+    if (node.hasAttribute('val')) node.setAttribute('val', String(randomUint32()));
+  });
+  localNameNodes(xmlDoc, 'modId').forEach(node => {
+    if (node.hasAttribute('val')) node.setAttribute('val', String(randomUint32()));
+  });
+}
+function appendImageTranslationShape(spTree, xmlDoc, shapeId, rect, text) {
+  const P = 'http://schemas.openxmlformats.org/presentationml/2006/main';
+  const A = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+  const make = (ns, name) => xmlDoc.createElementNS(ns, name);
+  const sp = make(P, 'p:sp');
+  const nvSpPr = make(P, 'p:nvSpPr');
+  const cNvPr = make(P, 'p:cNvPr'); cNvPr.setAttribute('id', String(shapeId)); cNvPr.setAttribute('name', `Image translation ${shapeId}`);
+  const cNvSpPr = make(P, 'p:cNvSpPr'); cNvSpPr.setAttribute('txBox', '1');
+  nvSpPr.appendChild(cNvPr); nvSpPr.appendChild(cNvSpPr); nvSpPr.appendChild(make(P, 'p:nvPr'));
+  const spPr = make(P, 'p:spPr');
+  const xfrm = make(A, 'a:xfrm');
+  const off = make(A, 'a:off'); off.setAttribute('x', String(Math.round(rect.x))); off.setAttribute('y', String(Math.round(rect.y)));
+  const ext = make(A, 'a:ext'); ext.setAttribute('cx', String(Math.max(91440, Math.round(rect.w)))); ext.setAttribute('cy', String(Math.max(45720, Math.round(rect.h))));
+  xfrm.appendChild(off); xfrm.appendChild(ext); spPr.appendChild(xfrm);
+  const geom = make(A, 'a:prstGeom'); geom.setAttribute('prst', 'rect'); geom.appendChild(make(A, 'a:avLst')); spPr.appendChild(geom);
+  const fill = make(A, 'a:solidFill'); const fillColor = make(A, 'a:srgbClr'); fillColor.setAttribute('val', 'FFF2CC'); fill.appendChild(fillColor); spPr.appendChild(fill);
+  const line = make(A, 'a:ln'); line.appendChild(make(A, 'a:noFill')); spPr.appendChild(line);
+  const txBody = make(P, 'p:txBody');
+  const bodyPr = make(A, 'a:bodyPr'); bodyPr.setAttribute('wrap', 'square'); bodyPr.setAttribute('anchor', 'ctr'); bodyPr.setAttribute('lIns', '30000'); bodyPr.setAttribute('rIns', '30000'); bodyPr.setAttribute('tIns', '15000'); bodyPr.setAttribute('bIns', '15000'); bodyPr.appendChild(make(A, 'a:normAutofit'));
+  txBody.appendChild(bodyPr); txBody.appendChild(make(A, 'a:lstStyle'));
+  const p = make(A, 'a:p'); const pPr = make(A, 'a:pPr'); pPr.setAttribute('algn', 'ctr'); p.appendChild(pPr);
+  const r = make(A, 'a:r'); const rPr = make(A, 'a:rPr'); rPr.setAttribute('lang', 'en-US'); rPr.setAttribute('dirty', '0');
+  const color = make(A, 'a:solidFill'); const black = make(A, 'a:srgbClr'); black.setAttribute('val', '000000'); color.appendChild(black); rPr.appendChild(color);
+  const t = make(A, 'a:t'); setTextNodeContent(t, text); r.appendChild(rPr); r.appendChild(t); p.appendChild(r); p.appendChild(make(A, 'a:endParaRPr')); txBody.appendChild(p);
+  sp.appendChild(nvSpPr); sp.appendChild(spPr); sp.appendChild(txBody); spTree.appendChild(sp);
+}
+function addImageTranslationOverlays(translatedXml, slideData, results) {
+  const spTree = firstLocalName(translatedXml, 'spTree');
+  if (!spTree) return 0;
+  let nextId = nextNumericId(localNameNodes(translatedXml, 'cNvPr').map(node => attrAny(node, ['id'])), 1);
+  let count = 0;
+  slideData.images.forEach(image => {
+    const result = results.get(image.id);
+    if (!result || result.error || !Array.isArray(result.regions)) return;
+    const pic = localNameNodes(translatedXml, 'pic').find(node => attrAny(firstLocalName(node, 'cNvPr'), ['id']) === String(image.picNodeId));
+    const xfrm = pic ? firstLocalName(pic, 'xfrm') : null;
+    const off = xfrm ? firstLocalName(xfrm, 'off') : null;
+    const ext = xfrm ? firstLocalName(xfrm, 'ext') : null;
+    const px = Number(attrAny(off, ['x'])); const py = Number(attrAny(off, ['y']));
+    const pw = Number(attrAny(ext, ['cx'])); const ph = Number(attrAny(ext, ['cy']));
+    if (![px, py, pw, ph].every(Number.isFinite) || pw <= 0 || ph <= 0) return;
+    result.regions.forEach(region => {
+      appendImageTranslationShape(spTree, translatedXml, nextId++, {
+        x:px + pw * region.bbox.x, y:py + ph * region.bbox.y,
+        w:pw * region.bbox.w, h:ph * region.bbox.h,
+      }, region.text);
+      count++;
+    });
+  });
+  return count;
+}
+async function validateGeneratedPptxBlob(blob, expectedSlides) {
+  const zip = await window.JSZip.loadAsync(blob);
+  const names = Object.keys(zip.files).filter(name => !zip.files[name].dir);
+  const nameSet = new Set(names);
+  const xmlMap = new Map();
+  for (const name of names.filter(name => /\.(xml|rels)$/i.test(name))) {
+    const xml = xmlFrom(await zip.file(name).async('text'));
+    if (xml.getElementsByTagName('parsererror').length) throw new Error(`PPTX 包校验失败：${name} XML 无法解析。`);
+    xmlMap.set(name, xml);
+  }
+  for (const [name, xml] of xmlMap) {
+    if (!name.endsWith('.rels')) continue;
+    for (const rel of localNameNodes(xml, 'Relationship')) {
+      if (attrAny(rel, ['TargetMode']) === 'External') continue;
+      const target = attrAny(rel, ['Target']);
+      const resolved = target.startsWith('/') ? target.slice(1) : (name === '_rels/.rels' ? target.replace(/^\.\//, '') : resolveZipPath(name, target));
+      if (target && !nameSet.has(resolved)) throw new Error(`PPTX 包校验失败：${name} 的关系 ${attrAny(rel, ['Id'])} 指向不存在的 ${resolved}。`);
+    }
+  }
+  const presentation = xmlMap.get('ppt/presentation.xml');
+  const ids = localNameNodes(firstLocalName(presentation, 'sldIdLst'), 'sldId');
+  if (ids.length !== expectedSlides) throw new Error(`PPTX 包校验失败：预期 ${expectedSlides} 页，实际 ${ids.length} 页。`);
+  const numericIds = ids.map(node => attrAny(node, ['id']));
+  const relIds = ids.map(node => relAttr(node, 'id'));
+  if (new Set(numericIds).size !== numericIds.length || new Set(relIds).size !== relIds.length) throw new Error('PPTX 包校验失败：幻灯片 ID 或关系 ID 重复。');
+  const order = { xfrm:0, prstGeom:1, custGeom:1, noFill:2, solidFill:2, gradFill:2, blipFill:2, pattFill:2, grpFill:2, ln:3, effectLst:4, effectDag:4, scene3d:5, sp3d:6, extLst:7 };
+  for (const [name, xml] of xmlMap) {
+    if (!/^ppt\/slides\/slide\d+\.xml$/i.test(name)) continue;
+    for (const spPr of localNameNodes(xml, 'spPr')) {
+      const ranks = Array.from(spPr.children).map(node => order[node.localName]).filter(Number.isFinite);
+      if (ranks.some((rank, index) => index && ranks[index - 1] > rank)) throw new Error(`PPTX 包校验失败：${name} 存在不符合 OOXML 顺序的 spPr。`);
+    }
+  }
+  return true;
 }
 async function buildTranslatedPptx(doc, lang, results) {
   const zip = await window.JSZip.loadAsync(doc.sourceBuffer);
@@ -1752,6 +1996,16 @@ async function buildTranslatedPptx(doc, lang, results) {
       if (!result || result.error || !result.text) return;
       updateTranslatedShape(sp, result.text, translatedXml);
     });
+    slideData.shapes.filter(item => item.kind === 'tableCell').forEach(item => {
+      const result = results.get(item.id);
+      if (!result || result.error || !result.text) return;
+      const frame = localNameNodes(translatedXml, 'graphicFrame').find(node => attrAny(firstLocalName(node, 'cNvPr'), ['id']) === String(item.frameNodeId));
+      const cell = frame ? localNameNodes(firstLocalName(frame, 'tbl'), 'tc')[item.cellIndex] : null;
+      if (cell) updateTranslatedTextBody(firstLocalName(cell, 'txBody'), result.text, translatedXml);
+    });
+    const imageRegions = addImageTranslationOverlays(translatedXml, slideData, results);
+    if (imageRegions) log('documentLog', `PPTX 第 ${slideData.index} 页：写入 ${imageRegions} 个图片译文区域。`);
+    regenerateOfficeUniqueIds(translatedXml);
     zip.file(newSlidePath, new XMLSerializer().serializeToString(translatedXml));
     if (zip.file(slideData.relPath)) {
       const relXml = xmlFrom(await zip.file(slideData.relPath).async('text'));
@@ -1759,6 +2013,30 @@ async function buildTranslatedPptx(doc, lang, results) {
         const type = attrAny(relNode, ['Type']);
         if (/\/notesSlide$/.test(type)) relNode.parentNode.removeChild(relNode);
       });
+      for (const diagram of (slideData.diagrams || [])) {
+        const originalPart = diagram.diagramPath;
+        const baseName = originalPart.split('/').pop().replace(/\.xml$/i, '');
+        const newPart = `ppt/diagrams/${baseName}_translated_${newSlideIndex}.xml`;
+        const diagramXml = xmlFrom(await zip.file(originalPart).async('text'));
+        const textNodes = localNameNodes(diagramXml, 't');
+        diagram.items.forEach(item => {
+          const result = results.get(item.id);
+          if (result && !result.error && result.text && textNodes[item.nodeIndex]) setTextNodeContent(textNodes[item.nodeIndex], result.text);
+        });
+        zip.file(newPart, new XMLSerializer().serializeToString(diagramXml));
+        const originalPartRel = originalPart.replace('ppt/diagrams/', 'ppt/diagrams/_rels/') + '.rels';
+        const newPartRel = newPart.replace('ppt/diagrams/', 'ppt/diagrams/_rels/') + '.rels';
+        if (zip.file(originalPartRel)) zip.file(newPartRel, await zip.file(originalPartRel).async('text'));
+        const slideRel = localNameNodes(relXml, 'Relationship').find(node => attrAny(node, ['Id']) === diagram.relId);
+        if (slideRel) slideRel.setAttribute('Target', `../diagrams/${newPart.split('/').pop()}`);
+        const originalOverride = localNameNodes(contentTypesXml, 'Override').find(node => attrAny(node, ['PartName']) === '/' + originalPart);
+        if (originalOverride) {
+          const override = contentTypesXml.createElementNS('http://schemas.openxmlformats.org/package/2006/content-types', 'Override');
+          override.setAttribute('PartName', '/' + newPart);
+          override.setAttribute('ContentType', attrAny(originalOverride, ['ContentType']));
+          contentRoot.appendChild(override);
+        }
+      }
       zip.file(newSlideRelPath, new XMLSerializer().serializeToString(relXml));
     }
     const override = contentTypesXml.createElementNS('http://schemas.openxmlformats.org/package/2006/content-types', 'Override');
@@ -1787,7 +2065,9 @@ async function buildTranslatedPptx(doc, lang, results) {
   zip.file(presentationPath, new XMLSerializer().serializeToString(presentationXml));
   zip.file(presentationRelPath, new XMLSerializer().serializeToString(presentationRelXml));
   zip.file(contentTypesPath, new XMLSerializer().serializeToString(contentTypesXml));
-  return await zip.generateAsync({ type:'blob' });
+  const blob = await zip.generateAsync({ type:'blob' });
+  await validateGeneratedPptxBlob(blob, originalSlideIdEntries.length * 2);
+  return blob;
 }
 function renderDocumentResult(result) {
   $('documentTableWrap').classList.remove('hidden');
@@ -1820,6 +2100,11 @@ async function runDocumentTranslate() {
     showToast('请先填写 API Key，或上传标准翻译库并选择命中后直接使用。', 'error');
     return;
   }
+  const hasPptx = state.documentFiles.some(item => /\.pptx$/i.test(item.name));
+  if (hasPptx && $('docTranslateImages')?.checked && !modelSupportsVision()) {
+    showToast('已启用 PPT 图片文字翻译，请选择带“多模态”标识的模型，或把模型能力手动设为“多模态”。', 'error');
+    return;
+  }
   if (!$('docOutputMarkdown').checked && !$('docOutputDocx').checked && !$('docOutputHtml').checked && !state.documentFiles.some(item => /\.pptx$/i.test(item.name))) {
     showToast('PDF 至少需要勾选一种输出格式。');
     return;
@@ -1846,6 +2131,7 @@ async function runDocumentTranslate() {
     protectedTerms: sharedRules.protectedTerms,
     customRules: sharedRules.customRules,
     outputs: { markdown: $('docOutputMarkdown').checked, docx: $('docOutputDocx').checked, html: $('docOutputHtml').checked },
+    translateImages: !!$('docTranslateImages')?.checked,
   };
   const parsedDocuments = [];
   let total = 0;
@@ -1880,8 +2166,9 @@ async function runDocumentTranslate() {
             renderDocumentResult({ name:item.name, lang, kind:'图文对照 HTML', status:'ok', message:`${doc.pages.length} 页原文截图 + 译文对照`, blob:new Blob([html], { type:'text/html;charset=utf-8' }), downloadName:`${fileStem(item.name)}_${lang}_compare.html` });
           }
         } else {
+          const coverage = validatePptxResultCoverage(doc, results, meta.translateImages);
           const blob = await buildTranslatedPptx(doc, lang, results);
-          renderDocumentResult({ name:item.name, lang, kind:'PPTX 翻译版', status:'ok', message:`原稿 ${doc.slides.length} 页，输出共 ${doc.slides.length * 2} 页；每页后新增对应译文页`, blob, downloadName:`${fileStem(item.name)}_${lang}_translated.pptx` });
+          renderDocumentResult({ name:item.name, lang, kind:'PPTX 翻译版', status:'ok', message:`通过完整性与包结构校验：${coverage.expected} 个对象；原稿 ${doc.slides.length} 页，输出 ${doc.slides.length * 2} 页`, blob, downloadName:`${fileStem(item.name)}_${lang}_translated.pptx` });
         }
       } catch (error) {
         state.errors++;
