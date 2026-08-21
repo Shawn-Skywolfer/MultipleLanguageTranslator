@@ -35,10 +35,12 @@ const state = {
   pptxOcrWorkerLang: '',
   imageTransportBlocked: false,
   upstreamCooldownUntil: 0,
+  downloadObjectUrls: new Set(),
   opsLogs: [],
   pv: 0,
 };
 const OPS_LOG_KEY = 'dp_ops_logs_v1';
+const PPTX_REPAIR_MEMORY_KEY = 'dp_pptx_repair_memory_v1';
 
 if (window.pdfjsLib) {
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
@@ -50,6 +52,7 @@ function log(id, msg) {
   const t = new Date().toLocaleTimeString();
   const line = `[${t}] ${msg}`;
   el.textContent += `\n${line}`;
+  if (el.textContent.length > 120000) el.textContent = '…\n' + el.textContent.slice(-80000);
   el.scrollTop = el.scrollHeight;
   state.opsLogs.push({ at: new Date().toISOString(), area: id, message: String(msg || '') });
   if (state.opsLogs.length > 5000) state.opsLogs = state.opsLogs.slice(-5000);
@@ -104,39 +107,6 @@ async function increasePv() {
     state.pv = 0;
   }
 }
-function loadOpsLogs() {
-  try {
-    const raw = localStorage.getItem(OPS_LOG_KEY);
-    const list = raw ? JSON.parse(raw) : [];
-    state.opsLogs = Array.isArray(list) ? list : [];
-  } catch (_) {
-    state.opsLogs = [];
-  }
-}
-function exportOpsLogs() {
-  const payload = {
-    exportedAt: new Date().toISOString(),
-    pv: state.pv,
-    logs: state.opsLogs,
-  };
-  downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type:'application/json;charset=utf-8' }), `ops_logs_${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
-  log('modelLog', `已导出操作日志：${state.opsLogs.length} 条。`);
-}
-function clearOpsLogs() {
-  state.opsLogs = [];
-  localStorage.removeItem(OPS_LOG_KEY);
-  log('modelLog', '已清空操作日志。');
-}
-async function increasePv() {
-  try {
-    const response = await fetch('/api/pv', { method: 'POST' });
-    const json = await response.json();
-    const pv = Number(json?.pv);
-    state.pv = Number.isFinite(pv) ? pv : 0;
-  } catch (_) {
-    state.pv = 0;
-  }
-}
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -155,14 +125,75 @@ function buildLangTag(langs) {
   if (list.length === 1) return list[0];
   return `multi_${list.join('+')}`;
 }
-function downloadBlob(blob, name) {
+async function sha256Hex(blob) {
+  if (!window.crypto?.subtle) return '';
+  const bytes = await blob.arrayBuffer();
+  const digest = new Uint8Array(await window.crypto.subtle.digest('SHA-256', bytes));
+  return Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+function pptxSavePickerOptions(name) {
+  return {
+    suggestedName:name,
+    types:[{
+      description:'PowerPoint Presentation',
+      accept:{ 'application/vnd.openxmlformats-officedocument.presentationml.presentation':['.pptx'] },
+    }],
+  };
+}
+async function writeAndVerifyPptx(handle, blob, expectedSlides) {
+  const expectedHash = await sha256Hex(blob);
+  let lastError = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      const persisted = await handle.getFile();
+      if (persisted.size !== blob.size) throw new Error(`文件大小不一致：预期 ${blob.size} 字节，实际 ${persisted.size} 字节`);
+      const persistedHash = await sha256Hex(persisted);
+      if (expectedHash && persistedHash !== expectedHash) throw new Error('文件 SHA-256 与生成结果不一致');
+      await validateGeneratedPptxBlob(persisted, expectedSlides);
+      return { size:persisted.size, hash:persistedHash || expectedHash, attempt };
+    } catch (error) {
+      lastError = error;
+      if (attempt === 1) log('documentLog', `PPTX 保存后校验失败，正在从内存中的已验证版本自动重写一次：${error.message || error}`);
+    }
+  }
+  throw lastError;
+}
+async function downloadBlob(blob, name, options) {
+  const expectedSlides = Number(options?.expectedSlides) || 0;
+  if (expectedSlides && window.isSecureContext && typeof window.showSaveFilePicker === 'function') {
+    try {
+      const handle = await window.showSaveFilePicker(pptxSavePickerOptions(name));
+      const report = await writeAndVerifyPptx(handle, blob, expectedSlides);
+      showToast(`PPTX 已安全保存并重新校验通过（${(report.size / 1024 / 1024).toFixed(1)} MB${report.attempt > 1 ? '，第 2 次写入成功' : ''}）。`, 'ok');
+      log('documentLog', `PPTX 落盘校验通过：${name}；${report.size} 字节；SHA-256 ${report.hash || '浏览器不支持'}。`);
+      return true;
+    } catch (error) {
+      if (error?.name === 'AbortError') return false;
+      showToast('PPTX 保存或落盘校验失败，请不要使用该文件并重新点击下载：' + (error.message || error), 'error');
+      log('documentLog', `PPTX 落盘校验失败：${name}；${error.message || error}`);
+      return false;
+    }
+  }
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  const objectUrl = URL.createObjectURL(blob);
+  state.downloadObjectUrls.add(objectUrl);
+  a.href = objectUrl;
   a.download = name;
   document.body.appendChild(a);
   a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   a.remove();
+  if (expectedSlides) {
+    showToast('浏览器不支持保存后重读校验；下载链接会保留到页面关闭，避免大文件被过早截断。', 'warn');
+    log('documentLog', `PPTX 已通过浏览器兼容下载：${name}。当前浏览器无法自动验证落盘文件。`);
+  }
+  return true;
+}
+function releaseDownloadObjectUrls() {
+  state.downloadObjectUrls.forEach(url => URL.revokeObjectURL(url));
+  state.downloadObjectUrls.clear();
 }
 function showToast(message, type) {
   const box = $('toastBox');
@@ -1560,10 +1591,19 @@ function collectDocumentTasks(doc) {
     return tasks;
   }
   const tasks = [];
-  doc.slides.forEach(slide => slide.shapes.forEach(shape => {
-    const lines = String(shape.text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-    tasks.push({ id:shape.id, source:shape.text, lines });
-  }));
+  doc.slides.forEach(slide => {
+    slide.shapes.forEach(shape => {
+      const lines = String(shape.text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+      tasks.push({ ...shape, id:shape.id, source:shape.text, lines });
+    });
+    (slide.diagrams || []).forEach(diagram => diagram.items.forEach(item => {
+      const lines = String(item.text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+      tasks.push({ ...item, source:item.text, lines });
+    }));
+    if ($('docTranslateImages')?.checked) {
+      slide.images.forEach(image => tasks.push({ ...image, id:image.id, source:'', imageData:image.data }));
+    }
+  });
   return tasks;
 }
 function validatePptxTranslationChecklist(task, translated) {
@@ -1945,6 +1985,11 @@ function replaceParagraphTextPreservingRuns(paragraph, text, xmlDoc) {
 }
 function splitTextByParagraphEffectiveCounts(text, paragraphs) {
   const source = String(text || '');
+  if (/\r?\n/.test(source)) {
+    const lines = source.split(/\r?\n/);
+    if (lines.length === paragraphs.length) return lines;
+    return splitTextByParagraphCount(source, paragraphs.length);
+  }
   const chars = Array.from(source);
   const effectiveCounts = paragraphs.map(p => localNameNodes(p, 't').map(n => (n.textContent || '').replace(/\s+/g, '').length).reduce((a, b) => a + b, 0));
   const totalEffective = effectiveCounts.reduce((a, b) => a + b, 0);
@@ -2077,8 +2122,7 @@ function updateTranslatedTextBody(txBody, translatedText, xmlDoc) {
     txBody.appendChild(paragraph);
   }
   const targetParagraphs = paragraphs.length ? paragraphs : [paragraph];
-  const balancedLines = rebalanceLinesToCount(translatedText, targetParagraphs.length);
-  const paragraphParts = splitTextByParagraphEffectiveCounts(balancedLines.join('\n'), targetParagraphs);
+  const paragraphParts = splitTextByParagraphEffectiveCounts(translatedText, targetParagraphs);
   targetParagraphs.forEach((item, index) => replaceParagraphTextPreservingRuns(item, paragraphParts[index] || '', xmlDoc));
   const afterBlueprint = readShapeBlueprint(txBody);
   const structureError = validateShapeBlueprint(beforeBlueprint, afterBlueprint);
@@ -2095,6 +2139,13 @@ function updateTranslatedTextBody(txBody, translatedText, xmlDoc) {
       tNodes.forEach((node, tIndex) => setTextNodeContent(node, tIndex === 0 ? part : ''));
     });
   }
+  lockTranslatedBodyLayout(txBody, xmlDoc);
+}
+
+function updateTranslatedShape(sp, translatedText, xmlDoc) {
+  const txBody = firstLocalName(sp, 'txBody');
+  if (!txBody) return;
+  updateTranslatedTextBody(txBody, translatedText, xmlDoc);
 
   let spPr = firstLocalName(sp, 'spPr');
   if (!spPr) {
@@ -2189,42 +2240,151 @@ function addImageTranslationOverlays(translatedXml, slideData, results) {
   });
   return count;
 }
+function pptxValidationError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+function loadPptxRepairMemory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PPTX_REPAIR_MEMORY_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+function rememberPptxAttempt(profile, error) {
+  const memory = loadPptxRepairMemory();
+  memory.version = 1;
+  memory.updatedAt = new Date().toISOString();
+  memory.attempts = Number(memory.attempts || 0) + 1;
+  if (error) {
+    const code = error.code || 'PPTX_UNKNOWN';
+    memory.failures = memory.failures || {};
+    memory.failures[code] = Number(memory.failures[code] || 0) + 1;
+    memory.lastFailure = { code, message:String(error.message || error).slice(0, 500), profile, at:memory.updatedAt };
+  } else {
+    memory.preferredCompression = profile.compression;
+    memory.lastSuccess = { profile, at:memory.updatedAt };
+  }
+  localStorage.setItem(PPTX_REPAIR_MEMORY_KEY, JSON.stringify(memory));
+}
+function pptxGenerationProfiles() {
+  const preferred = loadPptxRepairMemory().preferredCompression === 'STORE' ? 'STORE' : 'DEFLATE';
+  const alternate = preferred === 'DEFLATE' ? 'STORE' : 'DEFLATE';
+  return [{ compression:preferred }, { compression:alternate }];
+}
+function canRetryPptxGeneration(error) {
+  return ['PPTX_ZIP_HEADER', 'PPTX_ZIP_TRUNCATED', 'PPTX_ZIP_DIRECTORY', 'PPTX_ZIP_CRC'].includes(error?.code);
+}
+async function pptxBytes(input) {
+  if (input instanceof Uint8Array) return input;
+  if (input instanceof ArrayBuffer) return new Uint8Array(input);
+  if (input?.arrayBuffer) return new Uint8Array(await input.arrayBuffer());
+  return new Uint8Array(input || []);
+}
+function validateZipEnvelope(bytes) {
+  if (bytes.length < 22 || bytes[0] !== 0x50 || bytes[1] !== 0x4b || bytes[2] !== 0x03 || bytes[3] !== 0x04) {
+    throw pptxValidationError('PPTX_ZIP_HEADER', 'PPTX 包校验失败：文件头不是完整 ZIP 包。');
+  }
+  const minOffset = Math.max(0, bytes.length - 65557);
+  let eocd = -1;
+  for (let offset = bytes.length - 22; offset >= minOffset; offset--) {
+    if (bytes[offset] === 0x50 && bytes[offset + 1] === 0x4b && bytes[offset + 2] === 0x05 && bytes[offset + 3] === 0x06) {
+      eocd = offset;
+      break;
+    }
+  }
+  if (eocd < 0) throw pptxValidationError('PPTX_ZIP_TRUNCATED', 'PPTX 包校验失败：缺少 ZIP 中央目录结束标记，文件可能被截断。');
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const entries = view.getUint16(eocd + 10, true);
+  const centralSize = view.getUint32(eocd + 12, true);
+  const centralOffset = view.getUint32(eocd + 16, true);
+  if (!entries || centralOffset + centralSize > eocd) {
+    throw pptxValidationError('PPTX_ZIP_DIRECTORY', 'PPTX 包校验失败：ZIP 中央目录范围或条目数量异常。');
+  }
+  return { entries, centralOffset, centralSize, eocd };
+}
+function relationshipSourcePath(relPath) {
+  if (relPath === '_rels/.rels') return '';
+  return relPath.replace('/_rels/', '/').replace(/\.rels$/i, '');
+}
 async function validateGeneratedPptxBlob(blob, expectedSlides) {
-  const zip = await window.JSZip.loadAsync(blob);
+  const bytes = await pptxBytes(blob);
+  const envelope = validateZipEnvelope(bytes);
+  let zip;
+  try {
+    zip = await window.JSZip.loadAsync(bytes, { checkCRC32:true });
+  } catch (error) {
+    throw pptxValidationError('PPTX_ZIP_CRC', `PPTX 包校验失败：ZIP 解压或 CRC32 校验未通过。${error.message || error}`);
+  }
   const names = Object.keys(zip.files).filter(name => !zip.files[name].dir);
   const nameSet = new Set(names);
+  const required = ['[Content_Types].xml', '_rels/.rels', 'ppt/presentation.xml', 'ppt/_rels/presentation.xml.rels'];
+  required.forEach(name => {
+    if (!nameSet.has(name)) throw pptxValidationError('PPTX_REQUIRED_PART', `PPTX 包校验失败：缺少必需部件 ${name}。`);
+  });
   const xmlMap = new Map();
   for (const name of names.filter(name => /\.(xml|rels)$/i.test(name))) {
     const xml = xmlFrom(await zip.file(name).async('text'));
-    if (xml.getElementsByTagName('parsererror').length) throw new Error(`PPTX 包校验失败：${name} XML 无法解析。`);
+    if (xml.getElementsByTagName('parsererror').length) throw pptxValidationError('PPTX_XML_PARSE', `PPTX 包校验失败：${name} XML 无法解析。`);
     xmlMap.set(name, xml);
   }
+  const contentTypes = xmlMap.get('[Content_Types].xml');
+  const overrides = localNameNodes(contentTypes, 'Override').map(node => attrAny(node, ['PartName']));
+  const defaults = new Set(localNameNodes(contentTypes, 'Default').map(node => String(attrAny(node, ['Extension'])).toLowerCase()));
+  if (new Set(overrides).size !== overrides.length) throw pptxValidationError('PPTX_CONTENT_TYPES_DUPLICATE', 'PPTX 包校验失败：[Content_Types].xml 存在重复 PartName。');
+  const overrideSet = new Set(overrides);
+  names.forEach(name => {
+    if (name === '[Content_Types].xml') return;
+    const extension = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+    if (!overrideSet.has('/' + name) && !defaults.has(extension)) {
+      throw pptxValidationError('PPTX_CONTENT_TYPE_MISSING', `PPTX 包校验失败：${name} 没有对应的内容类型声明。`);
+    }
+  });
   for (const [name, xml] of xmlMap) {
     if (!name.endsWith('.rels')) continue;
-    for (const rel of localNameNodes(xml, 'Relationship')) {
+    const relationships = localNameNodes(xml, 'Relationship');
+    const relationshipIds = relationships.map(rel => attrAny(rel, ['Id']));
+    if (relationshipIds.some(id => !id) || new Set(relationshipIds).size !== relationshipIds.length) {
+      throw pptxValidationError('PPTX_RELATIONSHIP_ID', `PPTX 包校验失败：${name} 存在空白或重复关系 ID。`);
+    }
+    const sourcePath = relationshipSourcePath(name);
+    if (sourcePath && !nameSet.has(sourcePath)) throw pptxValidationError('PPTX_RELATIONSHIP_SOURCE', `PPTX 包校验失败：${name} 对应的源部件 ${sourcePath} 不存在。`);
+    for (const rel of relationships) {
       if (attrAny(rel, ['TargetMode']) === 'External') continue;
       const target = attrAny(rel, ['Target']);
       const resolved = target.startsWith('/') ? target.slice(1) : (name === '_rels/.rels' ? target.replace(/^\.\//, '') : resolveZipPath(name, target));
-      if (target && !nameSet.has(resolved)) throw new Error(`PPTX 包校验失败：${name} 的关系 ${attrAny(rel, ['Id'])} 指向不存在的 ${resolved}。`);
+      if (target && !nameSet.has(resolved)) throw pptxValidationError('PPTX_RELATIONSHIP_TARGET', `PPTX 包校验失败：${name} 的关系 ${attrAny(rel, ['Id'])} 指向不存在的 ${resolved}。`);
     }
   }
   const presentation = xmlMap.get('ppt/presentation.xml');
   const ids = localNameNodes(firstLocalName(presentation, 'sldIdLst'), 'sldId');
-  if (ids.length !== expectedSlides) throw new Error(`PPTX 包校验失败：预期 ${expectedSlides} 页，实际 ${ids.length} 页。`);
+  if (ids.length !== expectedSlides) throw pptxValidationError('PPTX_SLIDE_COUNT', `PPTX 包校验失败：预期 ${expectedSlides} 页，实际 ${ids.length} 页。`);
   const numericIds = ids.map(node => attrAny(node, ['id']));
   const relIds = ids.map(node => relAttr(node, 'id'));
-  if (new Set(numericIds).size !== numericIds.length || new Set(relIds).size !== relIds.length) throw new Error('PPTX 包校验失败：幻灯片 ID 或关系 ID 重复。');
+  if (new Set(numericIds).size !== numericIds.length || new Set(relIds).size !== relIds.length) throw pptxValidationError('PPTX_SLIDE_ID', 'PPTX 包校验失败：幻灯片 ID 或关系 ID 重复。');
+  const presentationRels = localNameNodes(xmlMap.get('ppt/_rels/presentation.xml.rels'), 'Relationship');
+  const presentationRelMap = new Map(presentationRels.map(rel => [attrAny(rel, ['Id']), rel]));
+  relIds.forEach(relId => {
+    const rel = presentationRelMap.get(relId);
+    if (!rel || !/\/slide$/.test(attrAny(rel, ['Type']))) throw pptxValidationError('PPTX_SLIDE_RELATIONSHIP', `PPTX 包校验失败：幻灯片关系 ${relId} 缺失或类型错误。`);
+  });
+  const slidePartNames = names.filter(name => /^ppt\/slides\/slide\d+\.xml$/i.test(name));
+  if (slidePartNames.length !== expectedSlides) throw pptxValidationError('PPTX_SLIDE_PART_COUNT', `PPTX 包校验失败：预期 ${expectedSlides} 个幻灯片部件，实际 ${slidePartNames.length} 个。`);
   const order = { xfrm:0, prstGeom:1, custGeom:1, noFill:2, solidFill:2, gradFill:2, blipFill:2, pattFill:2, grpFill:2, ln:3, effectLst:4, effectDag:4, scene3d:5, sp3d:6, extLst:7 };
   for (const [name, xml] of xmlMap) {
     if (!/^ppt\/slides\/slide\d+\.xml$/i.test(name)) continue;
+    const shapeIds = localNameNodes(xml, 'cNvPr').map(node => attrAny(node, ['id']));
+    if (shapeIds.some(id => !id) || new Set(shapeIds).size !== shapeIds.length) throw pptxValidationError('PPTX_SHAPE_ID', `PPTX 包校验失败：${name} 存在空白或重复形状 ID。`);
     for (const spPr of localNameNodes(xml, 'spPr')) {
       const ranks = Array.from(spPr.children).map(node => order[node.localName]).filter(Number.isFinite);
-      if (ranks.some((rank, index) => index && ranks[index - 1] > rank)) throw new Error(`PPTX 包校验失败：${name} 存在不符合 OOXML 顺序的 spPr。`);
+      if (ranks.some((rank, index) => index && ranks[index - 1] > rank)) throw pptxValidationError('PPTX_OOXML_ORDER', `PPTX 包校验失败：${name} 存在不符合 OOXML 顺序的 spPr。`);
     }
   }
-  return true;
+  return { bytes:bytes.length, entries:envelope.entries, slides:ids.length };
 }
-async function buildTranslatedPptx(doc, lang, results) {
+async function buildTranslatedPptxAttempt(doc, lang, results, profile) {
   const zip = await window.JSZip.loadAsync(doc.sourceBuffer);
   const presentationPath = 'ppt/presentation.xml';
   const presentationRelPath = 'ppt/_rels/presentation.xml.rels';
@@ -2333,9 +2493,34 @@ async function buildTranslatedPptx(doc, lang, results) {
   zip.file(presentationPath, new XMLSerializer().serializeToString(presentationXml));
   zip.file(presentationRelPath, new XMLSerializer().serializeToString(presentationRelXml));
   zip.file(contentTypesPath, new XMLSerializer().serializeToString(contentTypesXml));
-  const blob = await zip.generateAsync({ type:'blob' });
-  await validateGeneratedPptxBlob(blob, originalSlideIdEntries.length * 2);
+  const bytes = await zip.generateAsync({
+    type:'uint8array',
+    mimeType:'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    compression:profile.compression,
+    compressionOptions:{ level:6 },
+  });
+  await validateGeneratedPptxBlob(bytes, originalSlideIdEntries.length * 2);
+  const blob = new Blob([bytes], { type:'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
   return blob;
+}
+async function buildTranslatedPptx(doc, lang, results) {
+  const profiles = pptxGenerationProfiles();
+  let lastError = null;
+  for (let index = 0; index < profiles.length; index++) {
+    const profile = profiles[index];
+    try {
+      const blob = await buildTranslatedPptxAttempt(doc, lang, results, profile);
+      rememberPptxAttempt(profile, null);
+      if (index) log('documentLog', `PPTX 自动修复成功：改用 ${profile.compression} 策略重新生成并通过全部校验。`);
+      return blob;
+    } catch (error) {
+      lastError = error;
+      rememberPptxAttempt(profile, error);
+      if (index === profiles.length - 1 || !canRetryPptxGeneration(error)) throw error;
+      log('documentLog', `PPTX 生成校验失败（${error.code || 'UNKNOWN'}），将从未修改的原始文件重新生成，并切换为 ${profiles[index + 1].compression} 策略。`);
+    }
+  }
+  throw lastError;
 }
 function renderDocumentResult(result) {
   $('documentTableWrap').classList.remove('hidden');
@@ -2346,9 +2531,9 @@ function renderDocumentResult(result) {
   if (result.blob) {
     tr.querySelector('a').addEventListener('click', event => {
       event.preventDefault();
-      downloadBlob(result.blob, result.downloadName);
+      downloadBlob(result.blob, result.downloadName, { expectedSlides:result.expectedSlides });
     });
-    state.documentDownloads.push({ blob: result.blob, downloadName: result.downloadName });
+    state.documentDownloads.push({ blob: result.blob, downloadName: result.downloadName, expectedSlides:result.expectedSlides || 0 });
     $('zipDocumentBtn').classList.remove('hidden');
   }
 }
@@ -2441,7 +2626,7 @@ async function runDocumentTranslate() {
         } else {
           const coverage = validatePptxResultCoverage(doc, results, meta.translateImages);
           const blob = await buildTranslatedPptx(doc, lang, results);
-          renderDocumentResult({ name:item.name, lang, kind:'PPTX 翻译版', status:'ok', message:`通过完整性与包结构校验：${coverage.expected} 个对象；原稿 ${doc.slides.length} 页，输出 ${doc.slides.length * 2} 页`, blob, downloadName:`${fileStem(item.name)}_${lang}_translated.pptx` });
+          renderDocumentResult({ name:item.name, lang, kind:'PPTX 翻译版', status:'ok', message:`通过完整性、CRC 与包结构校验：${coverage.expected} 个对象；原稿 ${doc.slides.length} 页，输出 ${doc.slides.length * 2} 页。Chrome/Edge 下载后会自动重读并校验落盘文件。`, blob, downloadName:`${fileStem(item.name)}_${lang}_translated.pptx`, expectedSlides:doc.slides.length * 2 });
         }
       } catch (error) {
         state.errors++;
@@ -2491,8 +2676,8 @@ function init() {
   $('forgetSettingsBtn').addEventListener('click', forgetSettings);
   $('exportOpsLogBtn').addEventListener('click', exportOpsLogs);
   $('clearOpsLogBtn').addEventListener('click', clearOpsLogs);
-  $('selectAllLangBtn').addEventListener('click', () => document.querySelectorAll('.langCheck').forEach(item => { item.checked = true; }));
-  $('clearLangBtn').addEventListener('click', () => document.querySelectorAll('.langCheck').forEach(item => { item.checked = false; }));
+  $('selectAllLangBtn').addEventListener('click', () => { document.querySelectorAll('.langCheck').forEach(item => { item.checked = true; }); updateLangSummaries(); });
+  $('clearLangBtn').addEventListener('click', () => { document.querySelectorAll('.langCheck').forEach(item => { item.checked = false; }); updateLangSummaries(); });
   $('selectEuroBtn').addEventListener('click', () => selectLangs(['German','Spanish','French','Italian','Dutch','Polish','Portuguese','Danish','Swedish']));
   $('addLangBtn').addEventListener('click', () => {
     const value = $('customLang').value.trim();
@@ -2520,8 +2705,43 @@ function init() {
   $('clearRulesBtn').addEventListener('click', () => { $('protectedTerms').value = ''; $('customRules').value = ''; $('termsCsvFile').value = ''; $('termsCsvInfo').textContent = '可选上传术语 CSV：优先读取 term/protected_term/术语/词条列；未找到时读取第一列非空值并追加到受保护术语。'; });
   $('runDocumentBtn').addEventListener('click', runDocumentTranslate);
   $('cancelDocumentBtn').addEventListener('click', () => { state.cancel = true; log('documentLog', '收到停止指令；正在等待当前请求结束。'); });
-  setupDrop('translateDrop', files => loadTranslateFiles(files));
-  setupDrop('documentDrop', files => loadDocumentFiles(files));
+  window.addEventListener('pagehide', releaseDownloadObjectUrls);
+  setupDrop('translateDrop', files => loadTranslateFiles(files), 'translateFiles');
+  setupDrop('documentDrop', files => loadDocumentFiles(files), 'documentFiles');
+  $('toggleKeyBtn').addEventListener('click', () => {
+    const input = $('apiKey');
+    input.type = input.type === 'password' ? 'text' : 'password';
+  });
+  $('apiKey').addEventListener('input', () => updateModelStatus($('apiKey').value.trim() ? 'untested' : 'unset'));
+  updateModelStatus($('apiKey').value.trim() ? 'untested' : 'unset');
+  $('languageBox').addEventListener('change', updateLangSummaries);
+  updateLangSummaries();
+  ['translateLangSummary', 'documentLangSummary'].forEach(id => $(id).addEventListener('click', focusSharedRules));
+  $('zipTranslateBtn').addEventListener('click', () => downloadResultsZip(state.translateResults.filter(item => item.blob), 'csv_translations.zip', $('zipTranslateBtn')));
+  $('zipDocumentBtn').addEventListener('click', () => downloadResultsZip(state.documentDownloads, 'document_translations.zip', $('zipDocumentBtn')));
+  $('translateFileInfo').addEventListener('click', async event => {
+    const index = event.target && event.target.dataset ? event.target.dataset.remove : undefined;
+    if (index === undefined) return;
+    state.translateFiles.splice(Number(index), 1);
+    updateTranslateInfo();
+    if (state.translateFiles[0]) {
+      try {
+        const {text} = await readFileText(state.translateFiles[0].file);
+        fillColumnSelects(parseCSV(text)[0] || []);
+      } catch (_) {}
+    }
+  });
+  $('documentFileInfo').addEventListener('click', event => {
+    const index = event.target && event.target.dataset ? event.target.dataset.remove : undefined;
+    if (index === undefined) return;
+    state.documentFiles.splice(Number(index), 1);
+    updateDocumentInfo();
+  });
+  window.addEventListener('beforeunload', event => {
+    if (!state.running) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
   increasePv().then(() => {
     stat();
     log('modelLog', `页面访问记录：PV=${state.pv}`);

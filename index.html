@@ -268,7 +268,7 @@
           <div class="field"><label class="toggle-label"><input type="checkbox" id="docOutputDocx" checked /> <span>导出双语 DOCX（仅 PDF）</span></label></div>
           <div class="field"><label class="toggle-label"><input type="checkbox" id="docOutputHtml" checked /> <span>导出图文对照 HTML（仅 PDF）</span></label></div>
         </div>
-        <div class="field"><label class="toggle-label"><input type="checkbox" id="docTranslateImages" checked /> <span>使用多模态模型翻译 PPT 图片中的文字</span></label><div class="mini">发送前会自动压缩图片；如企业安全代理拦截图片上传，会自动切换为本地 OCR + 纯文本模型翻译。图片任务固定单并发并对 429 进行指数退避。</div></div>
+        <div class="field"><label class="toggle-label"><input type="checkbox" id="docTranslateImages" checked /> <span>使用多模态模型翻译 PPT 图片中的文字</span></label><div class="mini">发送前会自动压缩图片；如企业安全代理拦截图片上传，会自动切换为本地 OCR + 纯文本模型翻译。图片任务固定单并发并对 429 进行指数退避。Chrome / Edge 保存后会自动重读文件并验证字节、CRC 与包结构。</div></div>
         <div class="notice yellow">PPTX 会输出“原始页保留 + 每页后新增 1 页译文页”的翻译版 PPTX。普通文本框、表格单元格和图片文字都会纳入完整性检查；任何对象翻译失败时将阻止导出，避免生成漏译文件。导出前还会校验 OOXML、关系文件和幻灯片结构。</div>
       </div>
     </div>
