@@ -2,6 +2,11 @@
 'use strict';
 
 const DEFAULT_MODELS = ['gpt-5.4','gpt-4o-mini','gpt-4o','gpt-4.1-mini','claude-3-5-sonnet-latest','claude-sonnet-4-5','gemini-2.5-flash','gemini-2.5-pro','deepseek-chat','deepseek-reasoner','qwen-plus','qwen-max'];
+const MULTIMODAL_MODEL_PATTERNS = [
+  /gpt-4o/i, /gpt-4\.1/i, /gpt-5/i, /o[134](?:-|$)/i,
+  /claude-(?:3|sonnet|opus)/i, /gemini-(?:1\.5|2|3)/i,
+  /qwen.*(?:vl|omni)/i, /glm-4v/i, /kimi.*vision/i,
+];
 const PROVIDER_PRESETS = [
   {name:'AIHubMix', baseUrl:'https://aihubmix.com/v1', model:'gpt-5.4', models:DEFAULT_MODELS},
   {name:'智谱 BigModel', baseUrl:'https://open.bigmodel.cn/api/paas/v4', model:'glm-5.1', models:['glm-5.1','glm-5-turbo','glm-5','glm-4.7','glm-4.7-flash','glm-4.7-flashx','glm-4.6','glm-4.5-air','glm-4.5-airx','glm-4.5-flash','glm-4-flash-250414','glm-4-flashx-250414']},
@@ -51,7 +56,43 @@ function stat() {
   $('statPv').textContent = state.pv;
   $('statFiles').textContent = state.documentFiles.length + state.translateFiles.length;
   $('statDone').textContent = state.done;
-  $('statErrors').textContent = state.errors;
+  const errEl = $('statErrors');
+  errEl.textContent = state.errors;
+  errEl.classList.toggle('bad', state.errors > 0);
+  $('statHits').textContent = state.translationMemoryStats.hits || 0;
+}
+function loadOpsLogs() {
+  try {
+    const raw = localStorage.getItem(OPS_LOG_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    state.opsLogs = Array.isArray(list) ? list : [];
+  } catch (_) {
+    state.opsLogs = [];
+  }
+}
+function exportOpsLogs() {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    pv: state.pv,
+    logs: state.opsLogs,
+  };
+  downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type:'application/json;charset=utf-8' }), `ops_logs_${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+  log('modelLog', `已导出操作日志：${state.opsLogs.length} 条。`);
+}
+function clearOpsLogs() {
+  state.opsLogs = [];
+  localStorage.removeItem(OPS_LOG_KEY);
+  log('modelLog', '已清空操作日志。');
+}
+async function increasePv() {
+  try {
+    const response = await fetch('/api/pv', { method: 'POST' });
+    const json = await response.json();
+    const pv = Number(json?.pv);
+    state.pv = Number.isFinite(pv) ? pv : 0;
+  } catch (_) {
+    state.pv = 0;
+  }
 }
 function loadOpsLogs() {
   try {
@@ -113,11 +154,88 @@ function downloadBlob(blob, name) {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   a.remove();
 }
+function showToast(message, type) {
+  const box = $('toastBox');
+  if (!box) { alert(message); return; }
+  const item = document.createElement('div');
+  item.className = 'toast' + (type && type !== 'warn' ? ' ' + type : '');
+  item.textContent = message;
+  item.addEventListener('click', () => item.remove());
+  box.appendChild(item);
+  while (box.children.length > 3) box.removeChild(box.firstChild);
+  setTimeout(() => item.remove(), 5200);
+}
+function flashElement(el) {
+  if (!el) return;
+  el.classList.remove('flash-target');
+  void el.offsetWidth;
+  el.classList.add('flash-target');
+}
+function focusSharedRules() {
+  const sectionEl = $('sharedRulesSection');
+  if (!sectionEl || sectionEl.classList.contains('hidden')) return;
+  sectionEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  flashElement(sectionEl);
+}
+function updateModelStatus(status) {
+  const badge = $('modelStatusBadge');
+  if (!badge) return;
+  const map = { unset: '模型未配置', untested: '模型未测试', ok: '模型已连通', fail: '模型连接失败' };
+  badge.classList.remove('ok', 'fail', 'untested');
+  if (status === 'ok' || status === 'fail' || status === 'untested') badge.classList.add(status);
+  badge.textContent = map[status] || map.unset;
+}
+function formatBytes(size) {
+  if (!Number.isFinite(size)) return '';
+  if (size < 1024) return size + ' B';
+  if (size < 1048576) return (size / 1024).toFixed(1) + ' KB';
+  return (size / 1048576).toFixed(1) + ' MB';
+}
+function renderFileChips(containerId, files, emptyText, label) {
+  const box = $(containerId);
+  if (!files.length) { box.textContent = emptyText; return; }
+  box.innerHTML = `<span>${escapeHtml(label)}</span><div class="file-chips">` + files.map((item, index) =>
+    `<span class="file-chip"><span>${escapeHtml(item.name)}</span><span class="size">${formatBytes(item.file.size)}</span><button type="button" data-remove="${index}" aria-label="移除此文件">×</button></span>`
+  ).join('') + '</div>';
+}
+function updateLangSummaries() {
+  const langs = selectedLangs();
+  const text = langs.length
+    ? `已选 ${langs.length} 种语言：${langs.slice(0, 3).join(', ')}${langs.length > 3 ? ' …' : ''}`
+    : '未选择目标语言';
+  ['translateLangSummary', 'documentLangSummary'].forEach(id => { const el = $(id); if (el) el.textContent = text; });
+  const count = $('langCount');
+  if (count) count.textContent = langs.length ? `（已选 ${langs.length}）` : '（未选择）';
+}
+async function downloadResultsZip(entries, zipName, btn) {
+  if (!entries.length) return;
+  if (btn) btn.disabled = true;
+  try {
+    const zip = new window.JSZip();
+    entries.forEach(entry => zip.file(entry.downloadName, entry.blob));
+    const blob = await zip.generateAsync({ type: 'blob' });
+    downloadBlob(blob, zipName);
+    showToast('打包完成，已开始下载。', 'ok');
+  } catch (error) {
+    showToast('打包失败：' + (error.message || error), 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+function addPendingRow(tbodyId, wrapId, emptyId, cellsHtml) {
+  $(wrapId).classList.remove('hidden');
+  $(emptyId).classList.add('hidden');
+  const tr = document.createElement('tr');
+  tr.innerHTML = cellsHtml;
+  $(tbodyId).appendChild(tr);
+  return tr;
+}
 function tabs() {
   document.querySelectorAll('.tab').forEach(btn => btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(item => item.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(item => { item.classList.remove('active'); item.setAttribute('aria-selected', 'false'); });
     document.querySelectorAll('.section').forEach(item => item.classList.remove('active'));
     btn.classList.add('active');
+    btn.setAttribute('aria-selected', 'true');
     $('tab-' + btn.dataset.tab).classList.add('active');
     const sharedRulesSection = $('sharedRulesSection');
     if (sharedRulesSection) {
@@ -160,6 +278,15 @@ function getModelConfig() {
     apiKey,
     model: $('modelId').value.trim(),
   };
+}
+function isLikelyMultimodalModel(model) {
+  return MULTIMODAL_MODEL_PATTERNS.some(pattern => pattern.test(String(model || '')));
+}
+function modelSupportsVision() {
+  const mode = $('modelCapability')?.value || 'auto';
+  if (mode === 'vision') return true;
+  if (mode === 'text') return false;
+  return isLikelyMultimodalModel($('modelId').value.trim());
 }
 function getTokenLimitValue() {
   const value = $('maxTokens').value.trim();
@@ -239,7 +366,10 @@ async function postChatCompletion(body, logId) {
   throw new Error('接口参数兼容重试次数已用完。');
 }
 function stripOutputObject(text) {
-  const raw = String(text ?? '').trim();
+  const normalized = Array.isArray(text)
+    ? text.map(item => typeof item === 'string' ? item : (item?.text || item?.content || '')).join('')
+    : text;
+  const raw = String(normalized ?? '').trim();
   try {
     const obj = JSON.parse(raw);
     if (obj && typeof obj === 'object' && Object.prototype.hasOwnProperty.call(obj, 'output')) return String(obj.output ?? '');
@@ -254,6 +384,47 @@ async function chat(messages, logId) {
   const json = await postChatCompletion(body, logId);
   return stripOutputObject(json.choices?.[0]?.message?.content ?? json.choices?.[0]?.text ?? '');
 }
+function parseJsonResponse(text) {
+  const raw = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  const firstObject = raw.indexOf('{');
+  const lastObject = raw.lastIndexOf('}');
+  const candidate = firstObject >= 0 && lastObject > firstObject ? raw.slice(firstObject, lastObject + 1) : raw;
+  return JSON.parse(candidate);
+}
+function clamp01(value) {
+  return Math.max(0, Math.min(1, Number(value) || 0));
+}
+function normalizeImageRegions(payload) {
+  const regions = Array.isArray(payload?.regions) ? payload.regions : [];
+  return regions.map((region, index) => {
+    const bbox = region?.bbox || {};
+    const x = clamp01(bbox.x);
+    const y = clamp01(bbox.y);
+    const w = clamp01(bbox.w);
+    const h = clamp01(bbox.h);
+    return {
+      id: String(region?.id || `region-${index + 1}`),
+      source: String(region?.source || '').trim(),
+      text: String(region?.translation || region?.text || '').trim(),
+      bbox: { x, y, w: Math.min(w, 1 - x), h: Math.min(h, 1 - y) },
+    };
+  }).filter(region => region.text && region.bbox.w >= 0.01 && region.bbox.h >= 0.008);
+}
+async function translatePptxImageTask(task, targetLang, meta) {
+  if (!modelSupportsVision()) {
+    throw new Error(`图片文字翻译需要多模态模型；当前模型 ${$('modelId').value.trim()} 未标记为多模态。`);
+  }
+  const rulesBlock = formatTranslationRules(meta);
+  const prompt = `Inspect this PowerPoint image and find every meaningful text region. Translate the text from ${meta.sourceLang} to ${targetLang}. Return strict JSON only: {"regions":[{"id":"r1","source":"original text","translation":"translated text","bbox":{"x":0.0,"y":0.0,"w":0.0,"h":0.0}}]}. Coordinates are fractions of image width and height from the top-left. Preserve numbers, units, product names and protected terms. Exclude decorative marks and return an empty regions array when no readable text exists.${rulesBlock ? `\n${rulesBlock}` : ''}`;
+  const out = await chat([
+    { role:'system', content:'You are a precise OCR and translation engine for presentation images. Output valid JSON only.' },
+    { role:'user', content:[
+      { type:'text', text:prompt },
+      { type:'image_url', image_url:{ url:task.imageData, detail:'high' } },
+    ] },
+  ], 'documentLog');
+  return normalizeImageRegions(parseJsonResponse(out));
+}
 function renderModels() {
   const filter = $('modelFilter').value.trim().toLowerCase();
   const list = $('modelList');
@@ -266,7 +437,8 @@ function renderModels() {
   models.forEach(model => {
     const row = document.createElement('div');
     row.className = 'model-item';
-    row.innerHTML = `<span>${escapeHtml(model)}</span><button class="ghost" type="button">使用</button>`;
+    const badge = isLikelyMultimodalModel(model) ? '<span class="status ok">多模态</span>' : '<span class="status pending">文本</span>';
+    row.innerHTML = `<span>${escapeHtml(model)}</span>${badge}<button class="ghost" type="button">使用</button>`;
     row.addEventListener('click', () => {
       $('modelId').value = model;
       log('modelLog', '已选择模型：' + model);
@@ -302,6 +474,7 @@ function saveSettings() {
     modelId: $('modelId').value,
     temperature: $('temperature').value,
     maxTokens: $('maxTokens').value,
+    modelCapability: $('modelCapability').value,
     saveKey: $('saveKey').checked,
     apiKey: $('saveKey').checked ? cleanApiKey($('apiKey').value) : '',
   };
@@ -313,7 +486,7 @@ function loadSettings() {
     const raw = localStorage.getItem('difyDslTranslatorSettings');
     if (!raw) return;
     const data = JSON.parse(raw);
-    ['providerName','baseUrl','modelId','temperature','maxTokens','apiKey'].forEach(key => {
+    ['providerName','baseUrl','modelId','temperature','maxTokens','modelCapability','apiKey'].forEach(key => {
       if (data[key] !== undefined && $(key)) $(key).value = data[key];
     });
     $('saveKey').checked = !!data.saveKey;
@@ -349,8 +522,12 @@ async function testConnection() {
     const json = await postChatCompletion(body, 'modelLog');
     const out = json.choices?.[0]?.message?.content || json.choices?.[0]?.text || '';
     log('modelLog', '连通测试成功，模型返回：' + out.trim());
+    updateModelStatus('ok');
+    showToast('连通测试成功', 'ok');
   } catch (error) {
     log('modelLog', '连通测试失败：' + (error.message || error));
+    updateModelStatus('fail');
+    showToast('连通测试失败：' + (error.message || error), 'error');
   }
 }
 function renderLanguages() {
@@ -363,12 +540,14 @@ function renderLanguages() {
     label.innerHTML = `<input type="checkbox" class="langCheck" value="${escapeHtml(lang)}" ${(picked.has(lang) || (!picked.size && index === 0)) ? 'checked' : ''} /> ${escapeHtml(lang)}`;
     box.appendChild(label);
   });
+  updateLangSummaries();
 }
 function selectedLangs() {
   return Array.from(document.querySelectorAll('.langCheck:checked')).map(el => el.value);
 }
 function selectLangs(list) {
   document.querySelectorAll('.langCheck').forEach(el => { el.checked = list.includes(el.value); });
+  updateLangSummaries();
 }
 function normalizeSource(text) {
   return String(text ?? '').trim().replace(/\s+/g, ' ');
@@ -448,9 +627,7 @@ function fillColumnSelects(headers) {
   if ($('sourceColumn')) $('sourceColumn').value = autoPick(headers, ['source_text','source text','原文','待翻译文本','text','source','content','英文','中文']);
 }
 function updateTranslateInfo() {
-  $('translateFileInfo').textContent = state.translateFiles.length
-    ? `已载入 ${state.translateFiles.length} 个 CSV：` + state.translateFiles.map(item => item.name).join('；')
-    : '尚未上传 CSV。';
+  renderFileChips('translateFileInfo', state.translateFiles, '尚未上传 CSV。', `已载入 ${state.translateFiles.length} 个 CSV：`);
   stat();
 }
 async function loadTranslateFiles(files) {
@@ -469,7 +646,8 @@ async function loadTranslateFiles(files) {
 function updateTranslateProgress(done, total) {
   const pct = total ? Math.round(done / total * 100) : 0;
   $('translateBar').style.width = pct + '%';
-  $('translateProgressText').textContent = `进度：${done}/${total} (${pct}%)`;
+  const note = state.translateNote && done < total ? ` · 当前：${state.translateNote}` : '';
+  $('translateProgressText').textContent = `进度：${done}/${total} (${pct}%)${note}`;
 }
 function findAnyCol(headers, candidates) {
   const lower = headers.map(item => String(item).trim().toLowerCase());
@@ -731,24 +909,26 @@ function renderTranslateResult(result, status, message) {
   $('translateEmpty').classList.add('hidden');
   const tr = document.createElement('tr');
   const dl = result.blob ? '<a class="download-link secondary" href="#">下载</a>' : '-';
-  tr.innerHTML = `<td>${escapeHtml(result.name)}</td><td><span class="status ${status === 'ok' ? 'ok' : 'fail'}">${status === 'ok' ? '成功' : '失败'}</span></td><td>${result.tasks || 0}</td><td>${escapeHtml(message || (`错误 ${result.errors || 0} 个；警告 ${result.warnings || 0} 个；输出：${result.downloadName || ''}`))}</td><td>${dl}</td>`;
+  tr.innerHTML = `<td data-label="文件">${escapeHtml(result.name)}</td><td data-label="状态"><span class="status ${status === 'ok' ? 'ok' : 'fail'}">${status === 'ok' ? '成功' : '失败'}</span></td><td data-label="任务数">${result.tasks || 0}</td><td data-label="说明">${escapeHtml(message || (`错误 ${result.errors || 0} 个；警告 ${result.warnings || 0} 个；输出：${result.downloadName || ''}`))}</td><td data-label="下载">${dl}</td>`;
   $('translateResultBody').appendChild(tr);
   if (result.blob) {
     tr.querySelector('a').addEventListener('click', event => {
       event.preventDefault();
       downloadBlob(result.blob, result.downloadName);
     });
+    $('zipTranslateBtn').classList.remove('hidden');
   }
 }
 async function runTranslate() {
-  if (!state.translateFiles.length) { alert('请先上传 CSV 文件。'); return; }
+  if (!state.translateFiles.length) { showToast('请先上传 CSV 文件。'); flashElement($('translateDrop')); return; }
   const langs = selectedLangs();
-  if (!langs.length) { alert('请至少选择一个目标语言。'); return; }
+  if (!langs.length) { showToast('请至少选择一个目标语言。'); focusSharedRules(); return; }
   if (!$('apiKey').value.trim() && !(state.translationMemory.size && $('translationMemoryMode').value === 'direct')) {
-    alert('请先填写 API Key，或上传标准翻译库并选择命中后直接使用。');
+    showToast('请先填写 API Key，或上传标准翻译库并选择命中后直接使用。', 'error');
     return;
   }
   state.cancel = false;
+  state.running = true;
   state.done = 0;
   state.errors = 0;
   state.translationMemoryStats.hits = 0;
@@ -759,6 +939,7 @@ async function runTranslate() {
   $('translateResultBody').innerHTML = '';
   $('translateTableWrap').classList.add('hidden');
   $('translateEmpty').classList.remove('hidden');
+  $('zipTranslateBtn').classList.add('hidden');
   state.translateResults = [];
   setLog('translateLog', `开始批量翻译... 标准库 ${state.translationMemory.size} 条，模式：${$('translationMemoryMode').value === 'direct' ? '命中直接使用' : '命中后仍评审'}`);
   const sharedRules = getSharedRules();
@@ -788,6 +969,9 @@ async function runTranslate() {
   updateTranslateProgress(0, total);
   for (const item of state.translateFiles) {
     if (state.cancel) break;
+    state.translateNote = item.name;
+    const pendingRow = addPendingRow('translateResultBody', 'translateTableWrap', 'translateEmpty',
+      `<td data-label="文件">${escapeHtml(item.name)}</td><td data-label="状态"><span class="status pending">进行中</span></td><td data-label="任务数">-</td><td data-label="说明">正在翻译…</td><td data-label="下载">-</td>`);
     try {
       log('translateLog', '处理文件：' + item.name);
       const result = await processOneTranslate(item, meta, counter);
@@ -799,8 +983,12 @@ async function runTranslate() {
       stat();
       renderTranslateResult({name:item.name, tasks:0}, 'fail', error.message || String(error));
       log('translateLog', '失败：' + item.name + '；' + (error.message || error));
+    } finally {
+      pendingRow.remove();
     }
   }
+  state.translateNote = '';
+  state.running = false;
   $('runTranslateBtn').disabled = false;
   $('cancelTranslateBtn').disabled = true;
   const misses = Object.entries(state.translationMemoryStats.missesByLang).map(([lang, count]) => `${lang} ${count}`).join('；') || '无';
@@ -809,12 +997,13 @@ async function runTranslate() {
 function updateProgress(done, total) {
   const pct = total ? Math.round(done / total * 100) : 0;
   $('documentBar').style.width = pct + '%';
-  $('documentProgressText').textContent = `进度：${done}/${total} (${pct}%)`;
+  const note = state.progressNote && done < total ? ` · 当前：${state.progressNote}` : '';
+  $('documentProgressText').textContent = `进度：${done}/${total} (${pct}%)${note}`;
 }
 function isLikelyText(text) {
   const normalized = String(text || '').replace(/\s+/g, ' ').trim();
   if (!normalized) return false;
-  if (/^[\d\W_]+$/.test(normalized)) return false;
+  if (!/\p{L}/u.test(normalized)) return false;
   return normalized.length >= 2;
 }
 function groupPdfTextItems(items) {
@@ -822,6 +1011,7 @@ function groupPdfTextItems(items) {
     text: String(item.str || '').replace(/\s+/g, ' ').trim(),
     x: item.transform?.[4] || 0,
     y: item.transform?.[5] || 0,
+    w: Math.abs(item.width || 0),
     h: Math.abs(item.height || item.transform?.[0] || 10),
   })).filter(item => item.text);
   normalized.sort((a, b) => Math.abs(a.y - b.y) < 3 ? a.x - b.x : b.y - a.y);
@@ -829,10 +1019,12 @@ function groupPdfTextItems(items) {
   for (const token of normalized) {
     const last = lines[lines.length - 1];
     if (!last || Math.abs(last.y - token.y) > Math.max(4, token.h * 0.6)) {
-      lines.push({ y: token.y, height: token.h, parts:[token.text] });
+      lines.push({ y: token.y, height: token.h, parts:[token.text], x0: token.x, x1: token.x + token.w });
     } else {
       last.parts.push(token.text);
       last.height = Math.max(last.height, token.h);
+      last.x0 = Math.min(last.x0, token.x);
+      last.x1 = Math.max(last.x1, token.x + token.w);
     }
   }
   const blocks = [];
@@ -841,14 +1033,20 @@ function groupPdfTextItems(items) {
     const text = line.parts.join(' ').replace(/\s+/g, ' ').trim();
     if (!text) return;
     if (!current || Math.abs(current.prevY - line.y) > Math.max(14, line.height * 1.8)) {
-      current = { texts:[text], prevY: line.y };
+      current = { texts:[text], prevY: line.y, x0: line.x0, x1: line.x1, y0: line.y, y1: line.y + line.height };
       blocks.push(current);
     } else {
       current.texts.push(text);
       current.prevY = line.y;
+      current.x0 = Math.min(current.x0, line.x0);
+      current.x1 = Math.max(current.x1, line.x1);
+      current.y0 = Math.min(current.y0, line.y);
+      current.y1 = Math.max(current.y1, line.y + line.height);
     }
   });
-  return blocks.map((block, index) => ({ id:`text-${index + 1}`, text:block.texts.join('\n').trim() })).filter(block => isLikelyText(block.text));
+  return blocks
+    .map((block, index) => ({ id:`text-${index + 1}`, text:block.texts.join('\n').trim(), bbox:{ x0:block.x0, y0:block.y0, x1:block.x1, y1:block.y1 } }))
+    .filter(block => isLikelyText(block.text));
 }
 function splitOcrText(text) {
   return String(text || '').split(/\n{2,}/).map(part => part.replace(/[ \t]+/g, ' ').replace(/\n/g, ' ').trim()).filter(isLikelyText);
@@ -867,20 +1065,23 @@ function getOcrLanguage(sourceLang) {
   if (sourceLang === 'English') return 'eng';
   return 'eng+chi_sim';
 }
-async function extractPdfDocument(file, sourceLang) {
+async function extractPdfDocument(file, sourceLang, options) {
+  const captureImage = !!(options && options.captureImage);
   log('documentLog', `开始解析 PDF：${file.name}`);
   const pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
   const pages = [];
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 1 });
     const textContent = await page.getTextContent();
     let blocks = groupPdfTextItems(textContent.items || []);
     let extraction = 'text';
+    let pageCanvas = null;
     if (!blocks.length || blocks.map(item => item.text).join(' ').length < 24) {
       extraction = 'ocr';
       log('documentLog', `第 ${i} 页文本不足，开始 OCR...`);
-      const canvas = await renderPdfPageToCanvas(page, 2);
-      const result = await window.Tesseract.recognize(canvas, getOcrLanguage(sourceLang), {
+      pageCanvas = await renderPdfPageToCanvas(page, 2);
+      const result = await window.Tesseract.recognize(pageCanvas, getOcrLanguage(sourceLang), {
         logger: msg => {
           if (msg.status === 'recognizing text' && typeof msg.progress === 'number') {
             $('documentProgressText').textContent = `OCR 第 ${i} 页：${Math.round(msg.progress * 100)}%`;
@@ -889,7 +1090,12 @@ async function extractPdfDocument(file, sourceLang) {
       });
       blocks = splitOcrText(result.data.text).map((text, index) => ({ id:`ocr-${index + 1}`, text }));
     }
-    pages.push({ pageNo:i, extraction, blocks });
+    let image = '';
+    if (captureImage) {
+      if (!pageCanvas) pageCanvas = await renderPdfPageToCanvas(page, 1.6);
+      image = pageCanvas.toDataURL('image/jpeg', 0.82);
+    }
+    pages.push({ pageNo:i, extraction, blocks, width:viewport.width, height:viewport.height, image });
   }
   log('documentLog', `PDF 解析完成：${file.name}，共 ${pages.length} 页。`);
   return { type:'pdf', name:file.name, pages };
@@ -898,6 +1104,7 @@ function xmlFrom(text) {
   return new DOMParser().parseFromString(text, 'application/xml');
 }
 function localNameNodes(root, name) {
+  if (!root) return [];
   return Array.from(root.getElementsByTagName('*')).filter(node => node.localName === name);
 }
 function firstLocalName(root, name) {
@@ -1038,6 +1245,7 @@ async function extractPptxDocument(file) {
       const shapeNodeId = attrAny(idNode, ['id']) || String(shapes.length + 1);
       shapes.push({
         id: `slide-${slideIndex}-shape-${shapeNodeId}`,
+        kind: 'shape',
         shapeNodeId,
         text,
         x: emuToInch(attrAny(off, ['x'])),
@@ -1045,6 +1253,23 @@ async function extractPptxDocument(file) {
         w: Math.max(0.8, emuToInch(attrAny(ext, ['cx']))),
         h: Math.max(0.35, emuToInch(attrAny(ext, ['cy']))),
         fontSize,
+      });
+    });
+    localNameNodes(slideXml, 'graphicFrame').forEach(frame => {
+      const table = firstLocalName(frame, 'tbl');
+      if (!table) return;
+      const frameNodeId = attrAny(firstLocalName(frame, 'cNvPr'), ['id']) || String(shapes.length + 1);
+      localNameNodes(table, 'tc').forEach((cell, cellIndex) => {
+        const txBody = firstLocalName(cell, 'txBody');
+        if (!txBody) return;
+        const paragraphs = Array.from(txBody.children).filter(node => node.localName === 'p')
+          .map(p => localNameNodes(p, 't').map(t => t.textContent || '').join('')).filter(Boolean);
+        const text = paragraphs.join('\n').replace(/\u000b/g, '\n').trim();
+        if (!isLikelyText(text)) return;
+        shapes.push({
+          id: `slide-${slideIndex}-table-${frameNodeId}-cell-${cellIndex}`,
+          kind: 'tableCell', frameNodeId, cellIndex, text,
+        });
       });
     });
     const images = [];
@@ -1058,7 +1283,10 @@ async function extractPptxDocument(file) {
       const ext = xfrm ? firstLocalName(xfrm, 'ext') : null;
       const data = await zipFileToDataUrl(zip, targetPath);
       if (!data) continue;
+      const picNodeId = attrAny(firstLocalName(pic, 'cNvPr'), ['id']) || String(images.length + 1);
       images.push({
+        id: `slide-${slideIndex}-image-${picNodeId}`,
+        kind: 'image', picNodeId, rid, targetPath,
         data,
         x: emuToInch(attrAny(off, ['x'])),
         y: emuToInch(attrAny(off, ['y'])),
@@ -1066,7 +1294,17 @@ async function extractPptxDocument(file) {
         h: Math.max(0.5, emuToInch(attrAny(ext, ['cy']))),
       });
     }
-    slides.push({ index:slideIndex, slidePath, relPath, shapes, images, background });
+    const diagrams = [];
+    for (const [relId, diagramPath] of Object.entries(relMap).filter(([, path]) => /^ppt\/diagrams\/(?:data|drawing)\d+\.xml$/i.test(path))) {
+      if (!zip.file(diagramPath)) continue;
+      const diagramXml = xmlFrom(await zip.file(diagramPath).async('text'));
+      const items = localNameNodes(diagramXml, 't').map((node, nodeIndex) => ({
+        id:`slide-${slideIndex}-diagram-${relId}-text-${nodeIndex}`,
+        kind:'diagram', relId, diagramPath, nodeIndex, text:String(node.textContent || '').trim(),
+      })).filter(item => isLikelyText(item.text));
+      if (items.length) diagrams.push({ relId, diagramPath, items });
+    }
+    slides.push({ index:slideIndex, slidePath, relPath, shapes, images, diagrams, background });
   }
   log('documentLog', `PPTX 解析完成：${file.name}，共 ${slides.length} 页。`);
   return { type:'pptx', name:file.name, width, height, slides, sourceBuffer };
@@ -1135,6 +1373,12 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
     while (cursor < tasks.length && !state.cancel) {
       const task = tasks[cursor++];
       try {
+        if (task.kind === 'image') {
+          const regions = await withRetry(() => translatePptxImageTask(task, targetLang, meta), meta.retries);
+          results.set(task.id, { regions, text:'', warning:'', error:'' });
+          log('documentLog', `图片识别完成 ${task.id}：${regions.length} 个文字区域。`);
+          continue;
+        }
         const standard = lookupTranslationMemory(task.source, targetLang);
         let translated = '';
         if (standard && meta.translationMemoryMode === 'direct') {
@@ -1207,6 +1451,25 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
   }
   return results;
 }
+function validatePptxResultCoverage(doc, results, includeImages) {
+  const expected = [];
+  doc.slides.forEach(slide => {
+    slide.shapes.forEach(item => expected.push(item));
+    (slide.diagrams || []).forEach(diagram => diagram.items.forEach(item => expected.push(item)));
+    if (includeImages) slide.images.forEach(item => expected.push(item));
+  });
+  const failures = [];
+  expected.forEach(task => {
+    const result = results.get(task.id);
+    if (!result) failures.push(`${task.id}：缺少翻译结果`);
+    else if (result.error) failures.push(`${task.id}：${result.error}`);
+    else if (task.kind !== 'image' && !String(result.text || '').trim()) failures.push(`${task.id}：译文为空`);
+  });
+  if (failures.length) {
+    throw new Error(`PPTX 完整性检查未通过：${failures.length}/${expected.length} 个对象未成功翻译。为避免输出漏译页面，本次不生成 PPTX。\n${failures.slice(0, 12).join('\n')}`);
+  }
+  return { expected:expected.length, images:expected.filter(item => item.kind === 'image').length };
+}
 function buildPdfMarkdown(doc, lang, results) {
   const lines = [`# ${doc.name} - ${lang} 双语文档`, '', `- 输出语言：${lang}`, `- 页面数：${doc.pages.length}`, ''];
   doc.pages.forEach(page => {
@@ -1249,6 +1512,93 @@ async function buildPdfDocx(doc, lang, results) {
   });
   const docxFile = new d.Document({ sections:[{ children }] });
   return await d.Packer.toBlob(docxFile);
+}
+function pdfBlockRectStyle(block, page) {
+  if (!block.bbox || !page.width || !page.height) return '';
+  const clamp = value => Math.min(100, Math.max(0, value));
+  const left = clamp(block.bbox.x0 / page.width * 100);
+  const top = clamp((page.height - block.bbox.y1) / page.height * 100);
+  const width = clamp((block.bbox.x1 - block.bbox.x0) / page.width * 100);
+  const height = clamp((block.bbox.y1 - block.bbox.y0) / page.height * 100);
+  return `left:${left.toFixed(2)}%;top:${top.toFixed(2)}%;width:${Math.max(width, 0.5).toFixed(2)}%;height:${Math.max(height, 0.5).toFixed(2)}%`;
+}
+function buildPdfComparisonHtml(doc, lang, results) {
+  const out = [];
+  out.push('<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8" />');
+  out.push(`<title>${escapeHtml(doc.name)} - ${escapeHtml(lang)} 图文对照</title>`);
+  out.push('<meta name="viewport" content="width=device-width, initial-scale=1" />');
+  out.push('<style>');
+  out.push('body{margin:0;font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:#f3f4f6;color:#111827;}');
+  out.push('header{position:sticky;top:0;z-index:10;background:#111827;color:#f9fafb;padding:10px 20px;font-size:14px;display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;}');
+  out.push('header b{font-size:16px;}header span{opacity:.75;}');
+  out.push('.page{max-width:1500px;margin:20px auto;padding:0 16px;}');
+  out.push('.page-title{font-size:15px;font-weight:600;margin:0 0 8px;display:flex;gap:8px;align-items:center;}');
+  out.push('.badge{font-size:11px;background:#fde68a;color:#92400e;border-radius:999px;padding:1px 8px;font-weight:500;}');
+  out.push('.layout{display:flex;gap:14px;align-items:flex-start;}');
+  out.push('.preview{flex:0 0 55%;position:sticky;top:52px;}');
+  out.push('.canvasWrap{position:relative;border:1px solid #d1d5db;border-radius:6px;overflow:hidden;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.08);}');
+  out.push('.canvasWrap img{display:block;width:100%;}');
+  out.push('.noimg{padding:48px 16px;text-align:center;color:#6b7280;font-size:13px;}');
+  out.push('.hl{position:absolute;border:2px solid transparent;border-radius:3px;pointer-events:none;transition:all .15s;}');
+  out.push('.hl.active{border-color:#f59e0b;background:rgba(245,158,11,.18);box-shadow:0 0 0 3px rgba(245,158,11,.25);}');
+  out.push('.blocks{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;}');
+  out.push('.block{background:#fff;border:1px solid #e5e7eb;border-left:4px solid #e5e7eb;border-radius:6px;padding:10px 12px;cursor:pointer;}');
+  out.push('.block.active{border-left-color:#f59e0b;background:#fffbeb;}');
+  out.push('.block .num{display:inline-block;font-size:11px;color:#6b7280;background:#f3f4f6;border-radius:999px;padding:0 8px;margin-bottom:6px;}');
+  out.push('.block .tr{white-space:pre-wrap;font-size:14px;line-height:1.65;}');
+  out.push('.block details{margin-top:8px;font-size:12px;color:#6b7280;}');
+  out.push('.block details pre{white-space:pre-wrap;margin:6px 0 0;font-family:inherit;background:#f9fafb;border-radius:4px;padding:6px 8px;}');
+  out.push('.block .warn{margin-top:6px;font-size:12px;color:#b45309;}');
+  out.push('.block .err{margin-top:6px;font-size:12px;color:#b91c1c;}');
+  out.push('.empty{color:#6b7280;font-size:13px;background:#fff;border:1px dashed #d1d5db;border-radius:6px;padding:14px;}');
+  out.push('@media (max-width: 900px){.layout{flex-direction:column;}.preview{position:static;flex:none;width:100%;}}');
+  out.push('@media print{.preview{position:static;}header{position:static;}}');
+  out.push('</style></head><body>');
+  out.push(`<header><b>${escapeHtml(doc.name)}</b><span>译文语言：${escapeHtml(lang)}</span><span>共 ${doc.pages.length} 页</span><span>点击右侧译文块可在左侧原文页上高亮对应位置</span></header>`);
+  doc.pages.forEach(page => {
+    out.push('<section class="page">');
+    out.push(`<h2 class="page-title">第 ${page.pageNo} 页${page.extraction === 'ocr' ? '<span class="badge">OCR 页</span>' : ''}</h2>`);
+    out.push('<div class="layout">');
+    out.push('<div class="preview"><div class="canvasWrap">');
+    if (page.image) {
+      out.push(`<img src="${page.image}" alt="第 ${page.pageNo} 页原文" loading="lazy" />`);
+      page.blocks.forEach((block, index) => {
+        const style = pdfBlockRectStyle(block, page);
+        if (style) out.push(`<div class="hl" id="hl-p${page.pageNo}-b${index}" style="${style}"></div>`);
+      });
+    } else {
+      out.push('<div class="noimg">本页未生成原文截图。</div>');
+    }
+    out.push('</div></div>');
+    out.push('<div class="blocks">');
+    if (!page.blocks.length) {
+      out.push('<div class="empty">本页未识别到可翻译文本。</div>');
+    } else {
+      page.blocks.forEach((block, index) => {
+        const item = results.get(`page-${page.pageNo}-block-${index + 1}`) || { text:'', error:'未生成结果', warning:'' };
+        out.push(`<div class="block" data-hl="hl-p${page.pageNo}-b${index}" tabindex="0">`);
+        out.push(`<span class="num">第 ${page.pageNo} 页 · 块 ${index + 1}</span>`);
+        out.push(`<div class="tr">${item.error ? '' : escapeHtml(item.text || '(空)')}</div>`);
+        if (item.error) out.push(`<div class="err">[ERROR] ${escapeHtml(item.error)}</div>`);
+        if (item.warning) out.push(`<div class="warn">${escapeHtml(item.warning)}</div>`);
+        out.push(`<details><summary>原文</summary><pre>${escapeHtml(block.text || '(空)')}</pre></details>`);
+        out.push('</div>');
+      });
+    }
+    out.push('</div></div></section>');
+  });
+  out.push('<script>');
+  out.push('document.addEventListener("click", function (event) {');
+  out.push('  var block = event.target.closest(".block");');
+  out.push('  if (!block) return;');
+  out.push('  var actives = document.querySelectorAll(".active");');
+  out.push('  for (var i = 0; i < actives.length; i++) actives[i].classList.remove("active");');
+  out.push('  block.classList.add("active");');
+  out.push('  var hl = document.getElementById(block.getAttribute("data-hl") || "");');
+  out.push('  if (hl) hl.classList.add("active");');
+  out.push('});');
+  out.push('<\/script></body></html>');
+  return out.join('\n');
 }
 function nextNumericId(values, fallback) {
   const nums = values.map(value => Number(String(value).replace(/^\D+/, ''))).filter(Number.isFinite);
@@ -1425,8 +1775,61 @@ function splitTextByParagraphCount(text, count) {
   });
   return lines.map(line => line.join(' '));
 }
-function updateTranslatedShape(sp, translatedText, xmlDoc) {
-  const txBody = firstLocalName(sp, 'txBody');
+function scaleExplicitFontSizes(txBody, fontScale) {
+  if (!fontScale || fontScale === 100000) return;
+  Array.from(txBody.getElementsByTagName('*')).forEach(node => {
+    if (!['rPr', 'defRPr', 'endParaRPr'].includes(node.localName)) return;
+    const sz = Number(node.getAttribute('sz'));
+    if (!Number.isFinite(sz) || sz <= 0) return;
+    node.setAttribute('sz', String(Math.max(100, Math.round(sz * fontScale / 100000))));
+  });
+}
+function setNoAutofit(bodyPr, xmlDoc, replaceNode) {
+  const noAutofit = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:noAutofit');
+  if (replaceNode) {
+    bodyPr.replaceChild(noAutofit, replaceNode);
+    return;
+  }
+  const tail = Array.from(bodyPr.children).find(child => ['scene3d', 'sp3d', 'flatTx', 'extLst'].includes(child.localName));
+  if (tail) bodyPr.insertBefore(noAutofit, tail);
+  else bodyPr.appendChild(noAutofit);
+}
+function lockTranslatedBodyLayout(txBody, xmlDoc) {
+  let bodyPr = Array.from(txBody.children).find(child => child.localName === 'bodyPr');
+  if (!bodyPr) {
+    bodyPr = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:bodyPr');
+    txBody.insertBefore(bodyPr, txBody.firstChild);
+  }
+  bodyPr.setAttribute('wrap', 'none');
+  const children = Array.from(bodyPr.children);
+  const normAutofit = children.find(child => child.localName === 'normAutofit');
+  const spAutoFit = children.find(child => child.localName === 'spAutoFit');
+  const hasNoAutofit = children.some(child => child.localName === 'noAutofit');
+  if (normAutofit) {
+    const fontScale = Number(normAutofit.getAttribute('fontScale') || 100000);
+    const lnSpcReduction = Number(normAutofit.getAttribute('lnSpcReduction') || 0);
+    if (fontScale === 100000 && !lnSpcReduction) {
+      setNoAutofit(bodyPr, xmlDoc, normAutofit);
+      return;
+    }
+    const textRuns = [...localNameNodes(txBody, 'r'), ...localNameNodes(txBody, 'fld')].filter(run => localNameNodes(run, 't').length);
+    const allRunsSized = textRuns.length > 0 && textRuns.every(run => {
+      const rPr = firstLocalName(run, 'rPr');
+      return rPr && Number(rPr.getAttribute('sz')) > 0;
+    });
+    if (allRunsSized && !lnSpcReduction) {
+      scaleExplicitFontSizes(txBody, fontScale);
+      setNoAutofit(bodyPr, xmlDoc, normAutofit);
+    }
+    return;
+  }
+  if (spAutoFit) {
+    setNoAutofit(bodyPr, xmlDoc, spAutoFit);
+    return;
+  }
+  if (!hasNoAutofit) setNoAutofit(bodyPr, xmlDoc, null);
+}
+function updateTranslatedTextBody(txBody, translatedText, xmlDoc) {
   if (!txBody) return;
   const beforeBlueprint = readShapeBlueprint(txBody);
   const paragraphs = Array.from(txBody.children).filter(child => child.localName === 'p');
@@ -1467,7 +1870,121 @@ function updateTranslatedShape(sp, translatedText, xmlDoc) {
   const color = xmlDoc.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'a:srgbClr');
   color.setAttribute('val', 'FFF200');
   fill.appendChild(color);
-  spPr.appendChild(fill);
+  const insertBefore = Array.from(spPr.children).find(child => ['ln', 'effectLst', 'effectDag', 'scene3d', 'sp3d', 'extLst'].includes(child.localName));
+  if (insertBefore) spPr.insertBefore(fill, insertBefore);
+  else spPr.appendChild(fill);
+}
+function randomUint32() {
+  if (window.crypto?.getRandomValues) {
+    const value = new Uint32Array(1);
+    window.crypto.getRandomValues(value);
+    return value[0];
+  }
+  return Math.floor(Math.random() * 0x100000000);
+}
+function randomGuid() {
+  if (window.crypto?.randomUUID) return `{${window.crypto.randomUUID().toUpperCase()}}`;
+  const hex = () => randomUint32().toString(16).padStart(8, '0').toUpperCase();
+  const chars = Array.from(hex() + hex() + hex() + hex());
+  chars[12] = '4';
+  chars[16] = ['8','9','A','B'][randomUint32() % 4];
+  const raw = chars.join('');
+  return `{${raw.slice(0,8)}-${raw.slice(8,12)}-${raw.slice(12,16)}-${raw.slice(16,20)}-${raw.slice(20,32)}}`;
+}
+function regenerateOfficeUniqueIds(xmlDoc) {
+  localNameNodes(xmlDoc, 'creationId').forEach(node => {
+    if (node.hasAttribute('id')) node.setAttribute('id', randomGuid());
+    if (node.hasAttribute('val')) node.setAttribute('val', String(randomUint32()));
+  });
+  localNameNodes(xmlDoc, 'modId').forEach(node => {
+    if (node.hasAttribute('val')) node.setAttribute('val', String(randomUint32()));
+  });
+}
+function appendImageTranslationShape(spTree, xmlDoc, shapeId, rect, text) {
+  const P = 'http://schemas.openxmlformats.org/presentationml/2006/main';
+  const A = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+  const make = (ns, name) => xmlDoc.createElementNS(ns, name);
+  const sp = make(P, 'p:sp');
+  const nvSpPr = make(P, 'p:nvSpPr');
+  const cNvPr = make(P, 'p:cNvPr'); cNvPr.setAttribute('id', String(shapeId)); cNvPr.setAttribute('name', `Image translation ${shapeId}`);
+  const cNvSpPr = make(P, 'p:cNvSpPr'); cNvSpPr.setAttribute('txBox', '1');
+  nvSpPr.appendChild(cNvPr); nvSpPr.appendChild(cNvSpPr); nvSpPr.appendChild(make(P, 'p:nvPr'));
+  const spPr = make(P, 'p:spPr');
+  const xfrm = make(A, 'a:xfrm');
+  const off = make(A, 'a:off'); off.setAttribute('x', String(Math.round(rect.x))); off.setAttribute('y', String(Math.round(rect.y)));
+  const ext = make(A, 'a:ext'); ext.setAttribute('cx', String(Math.max(91440, Math.round(rect.w)))); ext.setAttribute('cy', String(Math.max(45720, Math.round(rect.h))));
+  xfrm.appendChild(off); xfrm.appendChild(ext); spPr.appendChild(xfrm);
+  const geom = make(A, 'a:prstGeom'); geom.setAttribute('prst', 'rect'); geom.appendChild(make(A, 'a:avLst')); spPr.appendChild(geom);
+  const fill = make(A, 'a:solidFill'); const fillColor = make(A, 'a:srgbClr'); fillColor.setAttribute('val', 'FFF2CC'); fill.appendChild(fillColor); spPr.appendChild(fill);
+  const line = make(A, 'a:ln'); line.appendChild(make(A, 'a:noFill')); spPr.appendChild(line);
+  const txBody = make(P, 'p:txBody');
+  const bodyPr = make(A, 'a:bodyPr'); bodyPr.setAttribute('wrap', 'square'); bodyPr.setAttribute('anchor', 'ctr'); bodyPr.setAttribute('lIns', '30000'); bodyPr.setAttribute('rIns', '30000'); bodyPr.setAttribute('tIns', '15000'); bodyPr.setAttribute('bIns', '15000'); bodyPr.appendChild(make(A, 'a:normAutofit'));
+  txBody.appendChild(bodyPr); txBody.appendChild(make(A, 'a:lstStyle'));
+  const p = make(A, 'a:p'); const pPr = make(A, 'a:pPr'); pPr.setAttribute('algn', 'ctr'); p.appendChild(pPr);
+  const r = make(A, 'a:r'); const rPr = make(A, 'a:rPr'); rPr.setAttribute('lang', 'en-US'); rPr.setAttribute('dirty', '0');
+  const color = make(A, 'a:solidFill'); const black = make(A, 'a:srgbClr'); black.setAttribute('val', '000000'); color.appendChild(black); rPr.appendChild(color);
+  const t = make(A, 'a:t'); setTextNodeContent(t, text); r.appendChild(rPr); r.appendChild(t); p.appendChild(r); p.appendChild(make(A, 'a:endParaRPr')); txBody.appendChild(p);
+  sp.appendChild(nvSpPr); sp.appendChild(spPr); sp.appendChild(txBody); spTree.appendChild(sp);
+}
+function addImageTranslationOverlays(translatedXml, slideData, results) {
+  const spTree = firstLocalName(translatedXml, 'spTree');
+  if (!spTree) return 0;
+  let nextId = nextNumericId(localNameNodes(translatedXml, 'cNvPr').map(node => attrAny(node, ['id'])), 1);
+  let count = 0;
+  slideData.images.forEach(image => {
+    const result = results.get(image.id);
+    if (!result || result.error || !Array.isArray(result.regions)) return;
+    const pic = localNameNodes(translatedXml, 'pic').find(node => attrAny(firstLocalName(node, 'cNvPr'), ['id']) === String(image.picNodeId));
+    const xfrm = pic ? firstLocalName(pic, 'xfrm') : null;
+    const off = xfrm ? firstLocalName(xfrm, 'off') : null;
+    const ext = xfrm ? firstLocalName(xfrm, 'ext') : null;
+    const px = Number(attrAny(off, ['x'])); const py = Number(attrAny(off, ['y']));
+    const pw = Number(attrAny(ext, ['cx'])); const ph = Number(attrAny(ext, ['cy']));
+    if (![px, py, pw, ph].every(Number.isFinite) || pw <= 0 || ph <= 0) return;
+    result.regions.forEach(region => {
+      appendImageTranslationShape(spTree, translatedXml, nextId++, {
+        x:px + pw * region.bbox.x, y:py + ph * region.bbox.y,
+        w:pw * region.bbox.w, h:ph * region.bbox.h,
+      }, region.text);
+      count++;
+    });
+  });
+  return count;
+}
+async function validateGeneratedPptxBlob(blob, expectedSlides) {
+  const zip = await window.JSZip.loadAsync(blob);
+  const names = Object.keys(zip.files).filter(name => !zip.files[name].dir);
+  const nameSet = new Set(names);
+  const xmlMap = new Map();
+  for (const name of names.filter(name => /\.(xml|rels)$/i.test(name))) {
+    const xml = xmlFrom(await zip.file(name).async('text'));
+    if (xml.getElementsByTagName('parsererror').length) throw new Error(`PPTX 包校验失败：${name} XML 无法解析。`);
+    xmlMap.set(name, xml);
+  }
+  for (const [name, xml] of xmlMap) {
+    if (!name.endsWith('.rels')) continue;
+    for (const rel of localNameNodes(xml, 'Relationship')) {
+      if (attrAny(rel, ['TargetMode']) === 'External') continue;
+      const target = attrAny(rel, ['Target']);
+      const resolved = target.startsWith('/') ? target.slice(1) : (name === '_rels/.rels' ? target.replace(/^\.\//, '') : resolveZipPath(name, target));
+      if (target && !nameSet.has(resolved)) throw new Error(`PPTX 包校验失败：${name} 的关系 ${attrAny(rel, ['Id'])} 指向不存在的 ${resolved}。`);
+    }
+  }
+  const presentation = xmlMap.get('ppt/presentation.xml');
+  const ids = localNameNodes(firstLocalName(presentation, 'sldIdLst'), 'sldId');
+  if (ids.length !== expectedSlides) throw new Error(`PPTX 包校验失败：预期 ${expectedSlides} 页，实际 ${ids.length} 页。`);
+  const numericIds = ids.map(node => attrAny(node, ['id']));
+  const relIds = ids.map(node => relAttr(node, 'id'));
+  if (new Set(numericIds).size !== numericIds.length || new Set(relIds).size !== relIds.length) throw new Error('PPTX 包校验失败：幻灯片 ID 或关系 ID 重复。');
+  const order = { xfrm:0, prstGeom:1, custGeom:1, noFill:2, solidFill:2, gradFill:2, blipFill:2, pattFill:2, grpFill:2, ln:3, effectLst:4, effectDag:4, scene3d:5, sp3d:6, extLst:7 };
+  for (const [name, xml] of xmlMap) {
+    if (!/^ppt\/slides\/slide\d+\.xml$/i.test(name)) continue;
+    for (const spPr of localNameNodes(xml, 'spPr')) {
+      const ranks = Array.from(spPr.children).map(node => order[node.localName]).filter(Number.isFinite);
+      if (ranks.some((rank, index) => index && ranks[index - 1] > rank)) throw new Error(`PPTX 包校验失败：${name} 存在不符合 OOXML 顺序的 spPr。`);
+    }
+  }
+  return true;
 }
 async function buildTranslatedPptx(doc, lang, results) {
   const zip = await window.JSZip.loadAsync(doc.sourceBuffer);
@@ -1509,6 +2026,16 @@ async function buildTranslatedPptx(doc, lang, results) {
       if (!result || result.error || !result.text) return;
       updateTranslatedShape(sp, result.text, translatedXml);
     });
+    slideData.shapes.filter(item => item.kind === 'tableCell').forEach(item => {
+      const result = results.get(item.id);
+      if (!result || result.error || !result.text) return;
+      const frame = localNameNodes(translatedXml, 'graphicFrame').find(node => attrAny(firstLocalName(node, 'cNvPr'), ['id']) === String(item.frameNodeId));
+      const cell = frame ? localNameNodes(firstLocalName(frame, 'tbl'), 'tc')[item.cellIndex] : null;
+      if (cell) updateTranslatedTextBody(firstLocalName(cell, 'txBody'), result.text, translatedXml);
+    });
+    const imageRegions = addImageTranslationOverlays(translatedXml, slideData, results);
+    if (imageRegions) log('documentLog', `PPTX 第 ${slideData.index} 页：写入 ${imageRegions} 个图片译文区域。`);
+    regenerateOfficeUniqueIds(translatedXml);
     zip.file(newSlidePath, new XMLSerializer().serializeToString(translatedXml));
     if (zip.file(slideData.relPath)) {
       const relXml = xmlFrom(await zip.file(slideData.relPath).async('text'));
@@ -1516,6 +2043,30 @@ async function buildTranslatedPptx(doc, lang, results) {
         const type = attrAny(relNode, ['Type']);
         if (/\/notesSlide$/.test(type)) relNode.parentNode.removeChild(relNode);
       });
+      for (const diagram of (slideData.diagrams || [])) {
+        const originalPart = diagram.diagramPath;
+        const baseName = originalPart.split('/').pop().replace(/\.xml$/i, '');
+        const newPart = `ppt/diagrams/${baseName}_translated_${newSlideIndex}.xml`;
+        const diagramXml = xmlFrom(await zip.file(originalPart).async('text'));
+        const textNodes = localNameNodes(diagramXml, 't');
+        diagram.items.forEach(item => {
+          const result = results.get(item.id);
+          if (result && !result.error && result.text && textNodes[item.nodeIndex]) setTextNodeContent(textNodes[item.nodeIndex], result.text);
+        });
+        zip.file(newPart, new XMLSerializer().serializeToString(diagramXml));
+        const originalPartRel = originalPart.replace('ppt/diagrams/', 'ppt/diagrams/_rels/') + '.rels';
+        const newPartRel = newPart.replace('ppt/diagrams/', 'ppt/diagrams/_rels/') + '.rels';
+        if (zip.file(originalPartRel)) zip.file(newPartRel, await zip.file(originalPartRel).async('text'));
+        const slideRel = localNameNodes(relXml, 'Relationship').find(node => attrAny(node, ['Id']) === diagram.relId);
+        if (slideRel) slideRel.setAttribute('Target', `../diagrams/${newPart.split('/').pop()}`);
+        const originalOverride = localNameNodes(contentTypesXml, 'Override').find(node => attrAny(node, ['PartName']) === '/' + originalPart);
+        if (originalOverride) {
+          const override = contentTypesXml.createElementNS('http://schemas.openxmlformats.org/package/2006/content-types', 'Override');
+          override.setAttribute('PartName', '/' + newPart);
+          override.setAttribute('ContentType', attrAny(originalOverride, ['ContentType']));
+          contentRoot.appendChild(override);
+        }
+      }
       zip.file(newSlideRelPath, new XMLSerializer().serializeToString(relXml));
     }
     const override = contentTypesXml.createElementNS('http://schemas.openxmlformats.org/package/2006/content-types', 'Override');
@@ -1544,23 +2095,27 @@ async function buildTranslatedPptx(doc, lang, results) {
   zip.file(presentationPath, new XMLSerializer().serializeToString(presentationXml));
   zip.file(presentationRelPath, new XMLSerializer().serializeToString(presentationRelXml));
   zip.file(contentTypesPath, new XMLSerializer().serializeToString(contentTypesXml));
-  return await zip.generateAsync({ type:'blob' });
+  const blob = await zip.generateAsync({ type:'blob' });
+  await validateGeneratedPptxBlob(blob, originalSlideIdEntries.length * 2);
+  return blob;
 }
 function renderDocumentResult(result) {
   $('documentTableWrap').classList.remove('hidden');
   $('documentEmpty').classList.add('hidden');
   const tr = document.createElement('tr');
-  tr.innerHTML = `<td>${escapeHtml(result.name)}</td><td>${escapeHtml(result.lang)}</td><td>${escapeHtml(result.kind)}</td><td><span class="status ${result.status === 'ok' ? 'ok' : 'fail'}">${result.status === 'ok' ? '成功' : '失败'}</span></td><td>${escapeHtml(result.message || '')}</td><td>${result.blob ? '<a class="download-link secondary" href="#">下载</a>' : '-'}</td>`;
+  tr.innerHTML = `<td data-label="文件">${escapeHtml(result.name)}</td><td data-label="语言">${escapeHtml(result.lang)}</td><td data-label="类型">${escapeHtml(result.kind)}</td><td data-label="状态"><span class="status ${result.status === 'ok' ? 'ok' : 'fail'}">${result.status === 'ok' ? '成功' : '失败'}</span></td><td data-label="说明">${escapeHtml(result.message || '')}</td><td data-label="下载">${result.blob ? '<a class="download-link secondary" href="#">下载</a>' : '-'}</td>`;
   $('documentResultBody').appendChild(tr);
   if (result.blob) {
     tr.querySelector('a').addEventListener('click', event => {
       event.preventDefault();
       downloadBlob(result.blob, result.downloadName);
     });
+    state.documentDownloads.push({ blob: result.blob, downloadName: result.downloadName });
+    $('zipDocumentBtn').classList.remove('hidden');
   }
 }
 function updateDocumentInfo() {
-  $('documentFileInfo').textContent = state.documentFiles.length ? `已载入 ${state.documentFiles.length} 个文档：` + state.documentFiles.map(item => item.name).join('；') : '尚未上传文档。';
+  renderFileChips('documentFileInfo', state.documentFiles, '尚未上传文档。', `已载入 ${state.documentFiles.length} 个文档：`);
   stat();
 }
 function loadDocumentFiles(files) {
@@ -1568,18 +2123,26 @@ function loadDocumentFiles(files) {
   updateDocumentInfo();
 }
 async function runDocumentTranslate() {
-  if (!state.documentFiles.length) { alert('请先上传 PDF 或 PPTX 文件。'); return; }
+  if (!state.documentFiles.length) { showToast('请先上传 PDF 或 PPTX 文件。'); flashElement($('documentDrop')); return; }
   const langs = selectedLangs();
-  if (!langs.length) { alert('请至少选择一个目标语言。'); return; }
+  if (!langs.length) { showToast('请至少选择一个目标语言。'); focusSharedRules(); return; }
   if (!$('apiKey').value.trim() && !(state.translationMemory.size && $('translationMemoryMode').value === 'direct')) {
-    alert('请先填写 API Key，或上传标准翻译库并选择命中后直接使用。');
+    showToast('请先填写 API Key，或上传标准翻译库并选择命中后直接使用。', 'error');
     return;
   }
-  if (!$('docOutputMarkdown').checked && !$('docOutputDocx').checked && !state.documentFiles.some(item => /\.pptx$/i.test(item.name))) {
-    alert('PDF 至少需要勾选一种输出格式。');
+  const hasPptx = state.documentFiles.some(item => /\.pptx$/i.test(item.name));
+  if (hasPptx && $('docTranslateImages')?.checked && !modelSupportsVision()) {
+    showToast('已启用 PPT 图片文字翻译，请选择带“多模态”标识的模型，或把模型能力手动设为“多模态”。', 'error');
+    return;
+  }
+  if (!$('docOutputMarkdown').checked && !$('docOutputDocx').checked && !$('docOutputHtml').checked && !state.documentFiles.some(item => /\.pptx$/i.test(item.name))) {
+    showToast('PDF 至少需要勾选一种输出格式。');
     return;
   }
   state.cancel = false;
+  state.running = true;
+  state.documentDownloads = [];
+  $('zipDocumentBtn').classList.add('hidden');
   $('runDocumentBtn').disabled = true;
   $('cancelDocumentBtn').disabled = false;
   $('documentResultBody').innerHTML = '';
@@ -1597,12 +2160,13 @@ async function runDocumentTranslate() {
     translationMemoryMode: $('translationMemoryMode').value,
     protectedTerms: sharedRules.protectedTerms,
     customRules: sharedRules.customRules,
-    outputs: { markdown: $('docOutputMarkdown').checked, docx: $('docOutputDocx').checked },
+    outputs: { markdown: $('docOutputMarkdown').checked, docx: $('docOutputDocx').checked, html: $('docOutputHtml').checked },
+    translateImages: !!$('docTranslateImages')?.checked,
   };
   const parsedDocuments = [];
   let total = 0;
   for (const item of state.documentFiles) {
-    const doc = /\.pdf$/i.test(item.name) ? await extractPdfDocument(item.file, meta.sourceLang) : await extractPptxDocument(item.file);
+    const doc = /\.pdf$/i.test(item.name) ? await extractPdfDocument(item.file, meta.sourceLang, { captureImage: meta.outputs.html }) : await extractPptxDocument(item.file);
     parsedDocuments.push({ item, doc });
     total += collectDocumentTasks(doc).length * langs.length;
   }
@@ -1612,6 +2176,9 @@ async function runDocumentTranslate() {
     if (state.cancel) break;
     for (const lang of langs) {
       if (state.cancel) break;
+      state.progressNote = `${item.name} → ${lang}`;
+      const pendingRow = addPendingRow('documentResultBody', 'documentTableWrap', 'documentEmpty',
+        `<td data-label="文件">${escapeHtml(item.name)}</td><td data-label="语言">${escapeHtml(lang)}</td><td data-label="类型">-</td><td data-label="状态"><span class="status pending">进行中</span></td><td data-label="说明">正在翻译…</td><td data-label="下载">-</td>`);
       try {
         log('documentLog', `翻译 ${item.name} -> ${lang}`);
         const results = await translateDocumentToLanguage(doc, lang, meta, counter);
@@ -1624,28 +2191,43 @@ async function runDocumentTranslate() {
             const blob = await buildPdfDocx(doc, lang, results);
             renderDocumentResult({ name:item.name, lang, kind:'DOCX', status:'ok', message:`${doc.pages.length} 页双语 DOCX`, blob, downloadName:`${fileStem(item.name)}_${lang}.docx` });
           }
+          if (meta.outputs.html) {
+            const html = buildPdfComparisonHtml(doc, lang, results);
+            renderDocumentResult({ name:item.name, lang, kind:'图文对照 HTML', status:'ok', message:`${doc.pages.length} 页原文截图 + 译文对照`, blob:new Blob([html], { type:'text/html;charset=utf-8' }), downloadName:`${fileStem(item.name)}_${lang}_compare.html` });
+          }
         } else {
+          const coverage = validatePptxResultCoverage(doc, results, meta.translateImages);
           const blob = await buildTranslatedPptx(doc, lang, results);
-          renderDocumentResult({ name:item.name, lang, kind:'PPTX 翻译版', status:'ok', message:`原稿 ${doc.slides.length} 页，输出共 ${doc.slides.length * 2} 页；每页后新增对应译文页`, blob, downloadName:`${fileStem(item.name)}_${lang}_translated.pptx` });
+          renderDocumentResult({ name:item.name, lang, kind:'PPTX 翻译版', status:'ok', message:`通过完整性与包结构校验：${coverage.expected} 个对象；原稿 ${doc.slides.length} 页，输出 ${doc.slides.length * 2} 页`, blob, downloadName:`${fileStem(item.name)}_${lang}_translated.pptx` });
         }
       } catch (error) {
         state.errors++;
         stat();
         renderDocumentResult({ name:item.name, lang, kind:doc.type === 'pdf' ? '文档' : 'PPTX 审校版', status:'fail', message:error.message || String(error), blob:null, downloadName:'' });
         log('documentLog', `失败：${item.name} -> ${lang}；${error.message || error}`);
+      } finally {
+        pendingRow.remove();
       }
     }
   }
+  state.progressNote = '';
+  state.running = false;
   $('runDocumentBtn').disabled = false;
   $('cancelDocumentBtn').disabled = true;
   const misses = Object.entries(state.translationMemoryStats.missesByLang).map(([lang, count]) => `${lang} ${count}`).join('；') || '无';
   log('documentLog', (state.cancel ? '已停止。' : '文档翻译结束。') + ` 标准库累计命中 ${state.translationMemoryStats.hits || 0}；未命中语言：${misses}。`);
 }
-function setupDrop(id, callback) {
+function setupDrop(id, callback, inputId) {
   const dz = $(id);
   ['dragenter','dragover'].forEach(type => dz.addEventListener(type, event => { event.preventDefault(); dz.classList.add('dragover'); }));
   ['dragleave','drop'].forEach(type => dz.addEventListener(type, event => { event.preventDefault(); dz.classList.remove('dragover'); }));
   dz.addEventListener('drop', event => callback(event.dataTransfer.files));
+  if (inputId) {
+    dz.addEventListener('click', () => $(inputId).click());
+    dz.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $(inputId).click(); }
+    });
+  }
 }
 function init() {
   tabs();
