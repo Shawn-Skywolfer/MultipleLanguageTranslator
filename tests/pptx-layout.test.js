@@ -216,4 +216,29 @@ function autofitNames(bodyPr) {
   assert.ok(names.indexOf('solidFill') < names.indexOf('ln'), `solidFill must precede ln: ${names.join(',')}`);
 }
 
-console.log('pptx layout fidelity checks passed: font sizes, xfrm positions, wrap=none, autofit locking and per-paragraph line mapping verified.');
+// 9. ZIP 外壳：必须存在本地文件头与中央目录结束标记，截断包必须被拒绝
+{
+  const bytes = new Uint8Array(52);
+  bytes.set([0x50, 0x4b, 0x03, 0x04], 0);
+  const eocd = 30;
+  bytes.set([0x50, 0x4b, 0x05, 0x06], eocd);
+  const view = new DataView(bytes.buffer);
+  view.setUint16(eocd + 10, 1, true);
+  view.setUint32(eocd + 12, 0, true);
+  view.setUint32(eocd + 16, 4, true);
+  const report = context.validateZipEnvelope(bytes);
+  assert.equal(report.entries, 1);
+
+  const truncated = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0]);
+  assert.throws(() => context.validateZipEnvelope(truncated), error => error.code === 'PPTX_ZIP_HEADER' || error.code === 'PPTX_ZIP_TRUNCATED');
+}
+
+assert.match(src, /loadAsync\(bytes, \{ checkCRC32:true \}\)/, 'generated package must validate CRC32');
+assert.match(src, /showSaveFilePicker/, 'PPTX download should use a verifiable file-system write when supported');
+assert.match(src, /await handle\.getFile\(\)/, 'saved PPTX must be reopened after writing');
+assert.doesNotMatch(src, /setTimeout\(\(\) => URL\.revokeObjectURL\([^)]*\), 2000\)/, 'large downloads must not revoke object URLs after two seconds');
+assert.match(src, /function pptxGenerationProfiles\(\)/, 'known generation failures should use bounded repair profiles');
+assert.match(src, /rememberPptxAttempt\(profile, error\)/, 'generation failures should be recorded for the next run');
+assert.match(src, /buildTranslatedPptxAttempt\(doc, lang, results, profile\)/, 'automatic retries must rebuild from the pristine source buffer');
+
+console.log('pptx checks passed: layout fidelity, OOXML order, ZIP envelope, CRC validation, and verified-save safeguards covered.');
