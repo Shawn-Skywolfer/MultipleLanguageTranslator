@@ -16,6 +16,7 @@ const constantsEnd = src.indexOf('\nconst PROVIDER_PRESETS', constantsStart);
 const code = [
   src.slice(constantsStart, constantsEnd),
   slice('\nfunction isLikelyMultimodalModel', '\nfunction modelSupportsVision'),
+  slice('\nfunction parseRetryAfterMs', '\nasync function proxyPost'),
   slice('\nfunction parseJsonResponse', '\nasync function translatePptxImageTask'),
 ].join('\n');
 const context = { console, JSON, Math, Number, String, Array, Object };
@@ -33,4 +34,19 @@ assert.equal(regions.length, 1);
 assert.equal(regions[0].text, 'Hello');
 assert.equal(JSON.stringify(regions[0].bbox), JSON.stringify({ x:0.1, y:0.2, w:0.3, h:0.4 }));
 
-console.log('multimodal checks passed: capability detection and image-region JSON normalization verified.');
+const hisHtml = '<!doctype html><title>HIS Proxy Notification</title><meta name="keywords" content="SWG,Proxy,NetentSec">';
+const proxyError = context.buildUpstreamError({ status:403, headers:{ get:() => '' } }, hisHtml);
+assert.equal(proxyError.code, 'CORPORATE_PROXY_BLOCK');
+assert.equal(proxyError.retryable, false);
+assert.equal(proxyError.message.includes('<!doctype'), false);
+
+const overloadError = context.buildUpstreamError({ status:429, headers:{ get:() => '3' } }, '{"error":{"type":"engine_overloaded_error"}}');
+assert.equal(overloadError.code, 'UPSTREAM_OVERLOADED');
+assert.equal(overloadError.retryable, true);
+assert.equal(overloadError.retryAfterMs, 3000);
+assert.equal(context.dataUrlByteLength('data:image/png;base64,YWJj'), 3);
+
+assert.match(src, /image_url:\{ url:prepared\.dataUrl/);
+assert.match(src, /translateLocalOcrLines\(task, prepared, targetLang, meta\)/);
+
+console.log('multimodal checks passed: capability detection, image normalization, proxy fallback, and concise upstream errors verified.');
