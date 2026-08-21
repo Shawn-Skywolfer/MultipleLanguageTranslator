@@ -50,7 +50,6 @@ function log(id, msg) {
   const t = new Date().toLocaleTimeString();
   const line = `[${t}] ${msg}`;
   el.textContent += `\n${line}`;
-  if (el.textContent.length > 120000) el.textContent = '…\n' + el.textContent.slice(-80000);
   el.scrollTop = el.scrollHeight;
   state.opsLogs.push({ at: new Date().toISOString(), area: id, message: String(msg || '') });
   if (state.opsLogs.length > 5000) state.opsLogs = state.opsLogs.slice(-5000);
@@ -71,6 +70,39 @@ function stat() {
   errEl.textContent = state.errors;
   errEl.classList.toggle('bad', state.errors > 0);
   $('statHits').textContent = state.translationMemoryStats.hits || 0;
+}
+function loadOpsLogs() {
+  try {
+    const raw = localStorage.getItem(OPS_LOG_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    state.opsLogs = Array.isArray(list) ? list : [];
+  } catch (_) {
+    state.opsLogs = [];
+  }
+}
+function exportOpsLogs() {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    pv: state.pv,
+    logs: state.opsLogs,
+  };
+  downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type:'application/json;charset=utf-8' }), `ops_logs_${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+  log('modelLog', `已导出操作日志：${state.opsLogs.length} 条。`);
+}
+function clearOpsLogs() {
+  state.opsLogs = [];
+  localStorage.removeItem(OPS_LOG_KEY);
+  log('modelLog', '已清空操作日志。');
+}
+async function increasePv() {
+  try {
+    const response = await fetch('/api/pv', { method: 'POST' });
+    const json = await response.json();
+    const pv = Number(json?.pv);
+    state.pv = Number.isFinite(pv) ? pv : 0;
+  } catch (_) {
+    state.pv = 0;
+  }
 }
 function loadOpsLogs() {
   try {
@@ -1528,19 +1560,10 @@ function collectDocumentTasks(doc) {
     return tasks;
   }
   const tasks = [];
-  doc.slides.forEach(slide => {
-    slide.shapes.forEach(shape => {
-      const lines = String(shape.text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-      tasks.push({ ...shape, id:shape.id, source:shape.text, lines });
-    });
-    (slide.diagrams || []).forEach(diagram => diagram.items.forEach(item => {
-      const lines = String(item.text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-      tasks.push({ ...item, source:item.text, lines });
-    }));
-    if ($('docTranslateImages')?.checked) {
-      slide.images.forEach(image => tasks.push({ ...image, id:image.id, source:'', imageData:image.data }));
-    }
-  });
+  doc.slides.forEach(slide => slide.shapes.forEach(shape => {
+    const lines = String(shape.text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    tasks.push({ id:shape.id, source:shape.text, lines });
+  }));
   return tasks;
 }
 function validatePptxTranslationChecklist(task, translated) {
@@ -1922,11 +1945,6 @@ function replaceParagraphTextPreservingRuns(paragraph, text, xmlDoc) {
 }
 function splitTextByParagraphEffectiveCounts(text, paragraphs) {
   const source = String(text || '');
-  if (/\r?\n/.test(source)) {
-    const lines = source.split(/\r?\n/);
-    if (lines.length === paragraphs.length) return lines;
-    return splitTextByParagraphCount(source, paragraphs.length);
-  }
   const chars = Array.from(source);
   const effectiveCounts = paragraphs.map(p => localNameNodes(p, 't').map(n => (n.textContent || '').replace(/\s+/g, '').length).reduce((a, b) => a + b, 0));
   const totalEffective = effectiveCounts.reduce((a, b) => a + b, 0);
@@ -2059,7 +2077,8 @@ function updateTranslatedTextBody(txBody, translatedText, xmlDoc) {
     txBody.appendChild(paragraph);
   }
   const targetParagraphs = paragraphs.length ? paragraphs : [paragraph];
-  const paragraphParts = splitTextByParagraphEffectiveCounts(translatedText, targetParagraphs);
+  const balancedLines = rebalanceLinesToCount(translatedText, targetParagraphs.length);
+  const paragraphParts = splitTextByParagraphEffectiveCounts(balancedLines.join('\n'), targetParagraphs);
   targetParagraphs.forEach((item, index) => replaceParagraphTextPreservingRuns(item, paragraphParts[index] || '', xmlDoc));
   const afterBlueprint = readShapeBlueprint(txBody);
   const structureError = validateShapeBlueprint(beforeBlueprint, afterBlueprint);
@@ -2076,13 +2095,6 @@ function updateTranslatedTextBody(txBody, translatedText, xmlDoc) {
       tNodes.forEach((node, tIndex) => setTextNodeContent(node, tIndex === 0 ? part : ''));
     });
   }
-  lockTranslatedBodyLayout(txBody, xmlDoc);
-}
-
-function updateTranslatedShape(sp, translatedText, xmlDoc) {
-  const txBody = firstLocalName(sp, 'txBody');
-  if (!txBody) return;
-  updateTranslatedTextBody(txBody, translatedText, xmlDoc);
 
   let spPr = firstLocalName(sp, 'spPr');
   if (!spPr) {
@@ -2479,8 +2491,8 @@ function init() {
   $('forgetSettingsBtn').addEventListener('click', forgetSettings);
   $('exportOpsLogBtn').addEventListener('click', exportOpsLogs);
   $('clearOpsLogBtn').addEventListener('click', clearOpsLogs);
-  $('selectAllLangBtn').addEventListener('click', () => { document.querySelectorAll('.langCheck').forEach(item => { item.checked = true; }); updateLangSummaries(); });
-  $('clearLangBtn').addEventListener('click', () => { document.querySelectorAll('.langCheck').forEach(item => { item.checked = false; }); updateLangSummaries(); });
+  $('selectAllLangBtn').addEventListener('click', () => document.querySelectorAll('.langCheck').forEach(item => { item.checked = true; }));
+  $('clearLangBtn').addEventListener('click', () => document.querySelectorAll('.langCheck').forEach(item => { item.checked = false; }));
   $('selectEuroBtn').addEventListener('click', () => selectLangs(['German','Spanish','French','Italian','Dutch','Polish','Portuguese','Danish','Swedish']));
   $('addLangBtn').addEventListener('click', () => {
     const value = $('customLang').value.trim();
@@ -2508,42 +2520,8 @@ function init() {
   $('clearRulesBtn').addEventListener('click', () => { $('protectedTerms').value = ''; $('customRules').value = ''; $('termsCsvFile').value = ''; $('termsCsvInfo').textContent = '可选上传术语 CSV：优先读取 term/protected_term/术语/词条列；未找到时读取第一列非空值并追加到受保护术语。'; });
   $('runDocumentBtn').addEventListener('click', runDocumentTranslate);
   $('cancelDocumentBtn').addEventListener('click', () => { state.cancel = true; log('documentLog', '收到停止指令；正在等待当前请求结束。'); });
-  setupDrop('translateDrop', files => loadTranslateFiles(files), 'translateFiles');
-  setupDrop('documentDrop', files => loadDocumentFiles(files), 'documentFiles');
-  $('toggleKeyBtn').addEventListener('click', () => {
-    const input = $('apiKey');
-    input.type = input.type === 'password' ? 'text' : 'password';
-  });
-  $('apiKey').addEventListener('input', () => updateModelStatus($('apiKey').value.trim() ? 'untested' : 'unset'));
-  updateModelStatus($('apiKey').value.trim() ? 'untested' : 'unset');
-  $('languageBox').addEventListener('change', updateLangSummaries);
-  updateLangSummaries();
-  ['translateLangSummary', 'documentLangSummary'].forEach(id => $(id).addEventListener('click', focusSharedRules));
-  $('zipTranslateBtn').addEventListener('click', () => downloadResultsZip(state.translateResults.filter(item => item.blob), 'csv_translations.zip', $('zipTranslateBtn')));
-  $('zipDocumentBtn').addEventListener('click', () => downloadResultsZip(state.documentDownloads, 'document_translations.zip', $('zipDocumentBtn')));
-  $('translateFileInfo').addEventListener('click', async event => {
-    const index = event.target && event.target.dataset ? event.target.dataset.remove : undefined;
-    if (index === undefined) return;
-    state.translateFiles.splice(Number(index), 1);
-    updateTranslateInfo();
-    if (state.translateFiles[0]) {
-      try {
-        const {text} = await readFileText(state.translateFiles[0].file);
-        fillColumnSelects(parseCSV(text)[0] || []);
-      } catch (_) {}
-    }
-  });
-  $('documentFileInfo').addEventListener('click', event => {
-    const index = event.target && event.target.dataset ? event.target.dataset.remove : undefined;
-    if (index === undefined) return;
-    state.documentFiles.splice(Number(index), 1);
-    updateDocumentInfo();
-  });
-  window.addEventListener('beforeunload', event => {
-    if (!state.running) return;
-    event.preventDefault();
-    event.returnValue = '';
-  });
+  setupDrop('translateDrop', files => loadTranslateFiles(files));
+  setupDrop('documentDrop', files => loadDocumentFiles(files));
   increasePv().then(() => {
     stat();
     log('modelLog', `页面访问记录：PV=${state.pv}`);
