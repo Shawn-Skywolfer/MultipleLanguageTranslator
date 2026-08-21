@@ -29,6 +29,12 @@ const state = {
   progressNote: '',
   translateNote: '',
   documentDownloads: [],
+  visionImageCache: new Map(),
+  pptxOcrCache: new Map(),
+  pptxOcrWorkerPromise: null,
+  pptxOcrWorkerLang: '',
+  imageTransportBlocked: false,
+  upstreamCooldownUntil: 0,
   opsLogs: [],
   pv: 0,
 };
@@ -282,6 +288,40 @@ function unsupportedParam(raw, param) {
   const s = String(raw || '').toLowerCase();
   return s.includes('unsupported parameter') && s.includes(param.toLowerCase());
 }
+function parseRetryAfterMs(res) {
+  const value = res?.headers?.get?.('retry-after');
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : 0;
+}
+function buildUpstreamError(res, raw) {
+  const status = Number(res?.status) || 0;
+  const source = String(raw || '');
+  const compact = source.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 320);
+  const lower = source.toLowerCase();
+  const isCorporateProxy = status === 403 && (
+    lower.includes('his proxy notification') || lower.includes('netentsec') ||
+    lower.includes('proxyaccess') || lower.includes('xdefend') || lower.includes('swg,proxy')
+  );
+  const isOverloaded = status === 429 || lower.includes('engine_overloaded') || lower.includes('currently overloaded');
+  let code = `HTTP_${status || 'UNKNOWN'}`;
+  let message = `HTTP ${status || '错误'}：${compact || '上游接口未返回错误详情'}`;
+  if (isCorporateProxy) {
+    code = 'CORPORATE_PROXY_BLOCK';
+    message = 'HTTP 403：企业网络安全代理（HIS/SWG）拦截了图片请求。应用将自动改用本地 OCR，再通过纯文本请求完成翻译。';
+  } else if (isOverloaded) {
+    code = 'UPSTREAM_OVERLOADED';
+    message = 'HTTP 429：模型引擎当前过载，应用已按指数退避自动重试。';
+  }
+  const error = new Error(message);
+  error.code = code;
+  error.status = status;
+  error.retryAfterMs = parseRetryAfterMs(res);
+  error.retryable = isOverloaded || [408, 425, 500, 502, 503, 504].includes(status);
+  return error;
+}
 async function proxyPost(url, payload) {
   if (window.location.protocol === 'file:') {
     throw new Error('当前版本不能通过直接双击 HTML 文件运行。请部署到 Vercel，或使用 `vercel dev` 这类支持 `/api/*` 的本地环境。');
@@ -295,7 +335,10 @@ async function proxyPost(url, payload) {
     const raw = await res.text();
     return { res, raw };
   } catch (error) {
-    throw new Error(`无法访问站内接口 ${url}。如果你当前是直接打开 HTML 文件，或使用了不支持 Serverless Functions 的静态服务器，就会出现这个问题。请部署到 Vercel，或使用 \`vercel dev\` 本地运行。原始错误：${error.message || error}`);
+    const wrapped = new Error(`无法访问站内接口 ${url}。请检查网络连接与 Vercel Functions 状态。原始错误：${error.message || error}`);
+    wrapped.code = 'NETWORK_ERROR';
+    wrapped.retryable = true;
+    throw wrapped;
   }
 }
 async function postChatCompletion(body, logId) {
@@ -333,7 +376,7 @@ async function postChatCompletion(body, logId) {
       if (logId) log(logId, '检测到当前模型不支持 temperature，已自动移除 temperature 并重试。');
       continue;
     }
-    throw new Error(`HTTP ${res.status}: ${raw.slice(0, 1000)}`);
+    throw buildUpstreamError(res, raw);
   }
   throw new Error('接口参数兼容重试次数已用完。');
 }
@@ -382,20 +425,204 @@ function normalizeImageRegions(payload) {
     };
   }).filter(region => region.text && region.bbox.w >= 0.01 && region.bbox.h >= 0.008);
 }
+function dataUrlByteLength(dataUrl) {
+  const base64 = String(dataUrl || '').split(',')[1] || '';
+  return Math.max(0, Math.floor(base64.length * 3 / 4) - (base64.endsWith('==') ? 2 : (base64.endsWith('=') ? 1 : 0)));
+}
+function loadHtmlImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('PPT 图片无法在浏览器中解码，可能是当前模型或浏览器不支持的图片格式。'));
+    image.src = dataUrl;
+  });
+}
+async function normalizeVisionImage(dataUrl) {
+  const image = await loadHtmlImage(dataUrl);
+  const maxEdge = 1600;
+  const targetBytes = 850 * 1024;
+  const naturalWidth = image.naturalWidth || image.width;
+  const naturalHeight = image.naturalHeight || image.height;
+  const scale = Math.min(1, maxEdge / Math.max(naturalWidth, naturalHeight));
+  let width = Math.max(1, Math.round(naturalWidth * scale));
+  let height = Math.max(1, Math.round(naturalHeight * scale));
+  let outputWidth = width;
+  let outputHeight = height;
+  let output = '';
+  for (let resizeAttempt = 0; resizeAttempt < 5; resizeAttempt++) {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(image, 0, 0, width, height);
+    outputWidth = width;
+    outputHeight = height;
+    for (const quality of [0.8, 0.7, 0.6, 0.5]) {
+      output = canvas.toDataURL('image/jpeg', quality);
+      if (dataUrlByteLength(output) <= targetBytes) break;
+    }
+    if (dataUrlByteLength(output) <= targetBytes) break;
+    width = Math.max(1, Math.round(width * 0.82));
+    height = Math.max(1, Math.round(height * 0.82));
+  }
+  return { dataUrl:output || dataUrl, width:outputWidth, height:outputHeight, bytes:dataUrlByteLength(output || dataUrl) };
+}
+async function prepareVisionImage(task) {
+  const key = task.targetPath || task.id;
+  if (!state.visionImageCache.has(key)) {
+    state.visionImageCache.set(key, normalizeVisionImage(task.imageData).catch(error => {
+      state.visionImageCache.delete(key);
+      throw error;
+    }));
+  }
+  return await state.visionImageCache.get(key);
+}
+function ocrBBox(node) {
+  const bbox = node?.bbox || {};
+  const x0 = Number(bbox.x0 ?? bbox.left);
+  const y0 = Number(bbox.y0 ?? bbox.top);
+  const x1 = Number(bbox.x1 ?? bbox.right);
+  const y1 = Number(bbox.y1 ?? bbox.bottom);
+  if (![x0, y0, x1, y1].every(Number.isFinite) || x1 <= x0 || y1 <= y0) return null;
+  return { x0, y0, x1, y1 };
+}
+function collectNestedOcrLines(data) {
+  if (Array.isArray(data?.lines) && data.lines.length) return data.lines;
+  const lines = [];
+  (data?.blocks || []).forEach(block => (block.paragraphs || []).forEach(paragraph => {
+    (paragraph.lines || []).forEach(line => lines.push(line));
+  }));
+  return lines;
+}
+function collectNestedOcrWords(data) {
+  if (Array.isArray(data?.words) && data.words.length) return data.words;
+  const words = [];
+  (data?.blocks || []).forEach(block => (block.paragraphs || []).forEach(paragraph => {
+    (paragraph.lines || []).forEach(line => (line.words || []).forEach(word => words.push(word)));
+  }));
+  return words;
+}
+function groupOcrWordsIntoLines(words) {
+  const groups = [];
+  words.map(word => ({ word, bbox:ocrBBox(word) })).filter(item => item.bbox && isLikelyText(item.word.text))
+    .sort((a, b) => a.bbox.y0 - b.bbox.y0 || a.bbox.x0 - b.bbox.x0).forEach(item => {
+      const centerY = (item.bbox.y0 + item.bbox.y1) / 2;
+      const group = groups.find(candidate => centerY >= candidate.y0 && centerY <= candidate.y1);
+      if (group) {
+        group.items.push(item);
+        group.x0 = Math.min(group.x0, item.bbox.x0); group.y0 = Math.min(group.y0, item.bbox.y0);
+        group.x1 = Math.max(group.x1, item.bbox.x1); group.y1 = Math.max(group.y1, item.bbox.y1);
+      } else {
+        groups.push({ items:[item], ...item.bbox });
+      }
+    });
+  return groups.map(group => ({
+    text:group.items.sort((a, b) => a.bbox.x0 - b.bbox.x0).map(item => item.word.text).join(' '),
+    bbox:{ x0:group.x0, y0:group.y0, x1:group.x1, y1:group.y1 },
+  }));
+}
+function normalizeOcrLines(data, width, height) {
+  let lines = collectNestedOcrLines(data).map(line => ({ text:String(line.text || '').trim(), bbox:ocrBBox(line) }))
+    .filter(line => line.bbox && isLikelyText(line.text));
+  if (!lines.length) lines = groupOcrWordsIntoLines(collectNestedOcrWords(data));
+  if (!lines.length) {
+    const textLines = splitOcrText(data?.text || '');
+    lines = textLines.map((text, index) => ({
+      text,
+      bbox:{ x0:0, y0:index * height / Math.max(1, textLines.length), x1:width, y1:(index + 1) * height / Math.max(1, textLines.length) },
+    }));
+  }
+  return lines.map((line, index) => ({
+    id:`ocr-${index + 1}`,
+    source:line.text,
+    bbox:{
+      x:clamp01(line.bbox.x0 / width), y:clamp01(line.bbox.y0 / height),
+      w:clamp01((line.bbox.x1 - line.bbox.x0) / width), h:clamp01((line.bbox.y1 - line.bbox.y0) / height),
+    },
+  })).filter(line => line.bbox.w >= 0.01 && line.bbox.h >= 0.008);
+}
+async function getLocalOcrLines(task, prepared, meta) {
+  const key = task.targetPath || task.id;
+  if (!state.pptxOcrCache.has(key)) {
+    state.pptxOcrCache.set(key, (async () => {
+      if (!window.Tesseract) throw new Error('企业代理阻止了图片上传，且本地 OCR 组件未加载，无法安全完成图片文字翻译。');
+      log('documentLog', `企业代理兼容模式：正在本地 OCR ${task.id}...`);
+      const worker = await getPptxOcrWorker(meta.sourceLang);
+      const result = await worker.recognize(prepared.dataUrl, {}, { text:true, blocks:true });
+      return normalizeOcrLines(result.data || {}, prepared.width, prepared.height);
+    })().catch(error => {
+      state.pptxOcrCache.delete(key);
+      throw error;
+    }));
+  }
+  return await state.pptxOcrCache.get(key);
+}
+async function getPptxOcrWorker(sourceLang) {
+  const lang = getOcrLanguage(sourceLang);
+  if (state.pptxOcrWorkerPromise && state.pptxOcrWorkerLang === lang) return await state.pptxOcrWorkerPromise;
+  await closePptxOcrWorker();
+  state.pptxOcrWorkerLang = lang;
+  state.pptxOcrWorkerPromise = window.Tesseract.createWorker(lang, 1).catch(error => {
+    state.pptxOcrWorkerPromise = null;
+    state.pptxOcrWorkerLang = '';
+    throw error;
+  });
+  return await state.pptxOcrWorkerPromise;
+}
+async function closePptxOcrWorker() {
+  const pending = state.pptxOcrWorkerPromise;
+  state.pptxOcrWorkerPromise = null;
+  state.pptxOcrWorkerLang = '';
+  if (!pending) return;
+  try {
+    const worker = await pending;
+    await worker.terminate();
+  } catch (_) {}
+}
+async function translateLocalOcrLines(task, prepared, targetLang, meta) {
+  const lines = await getLocalOcrLines(task, prepared, meta);
+  if (!lines.length) return [];
+  const rulesBlock = formatTranslationRules(meta);
+  const payload = lines.map(line => ({ id:line.id, source:line.source }));
+  const out = await chat([
+    { role:'system', content:'You translate OCR lines from a presentation image. Output valid JSON only.' },
+    { role:'user', content:`Translate every item from ${meta.sourceLang} to ${targetLang}. Return strict JSON only: {"translations":[{"id":"ocr-1","translation":"..."}]}. Preserve numbers, units, product names and protected terms.${rulesBlock ? `\n${rulesBlock}` : ''}\nINPUT:\n${JSON.stringify(payload)}` },
+  ], 'documentLog');
+  const parsed = parseJsonResponse(out);
+  const translated = new Map((parsed.translations || []).map(item => [String(item.id || ''), String(item.translation || '').trim()]));
+  const missing = lines.filter(line => !translated.get(line.id));
+  if (missing.length) {
+    const error = new Error(`本地 OCR 已识别 ${lines.length} 个文字区域，但模型漏回 ${missing.length} 个译文。`);
+    error.code = 'OCR_TRANSLATION_INCOMPLETE';
+    throw error;
+  }
+  return lines.map(line => ({ ...line, text:translated.get(line.id) }));
+}
 async function translatePptxImageTask(task, targetLang, meta) {
   if (!modelSupportsVision()) {
     throw new Error(`图片文字翻译需要多模态模型；当前模型 ${$('modelId').value.trim()} 未标记为多模态。`);
   }
+  const prepared = await prepareVisionImage(task);
+  if (state.imageTransportBlocked) return await translateLocalOcrLines(task, prepared, targetLang, meta);
   const rulesBlock = formatTranslationRules(meta);
   const prompt = `Inspect this PowerPoint image and find every meaningful text region. Translate the text from ${meta.sourceLang} to ${targetLang}. Return strict JSON only: {"regions":[{"id":"r1","source":"original text","translation":"translated text","bbox":{"x":0.0,"y":0.0,"w":0.0,"h":0.0}}]}. Coordinates are fractions of image width and height from the top-left. Preserve numbers, units, product names and protected terms. Exclude decorative marks and return an empty regions array when no readable text exists.${rulesBlock ? `\n${rulesBlock}` : ''}`;
-  const out = await chat([
-    { role:'system', content:'You are a precise OCR and translation engine for presentation images. Output valid JSON only.' },
-    { role:'user', content:[
-      { type:'text', text:prompt },
-      { type:'image_url', image_url:{ url:task.imageData, detail:'high' } },
-    ] },
-  ], 'documentLog');
-  return normalizeImageRegions(parseJsonResponse(out));
+  try {
+    const out = await chat([
+      { role:'system', content:'You are a precise OCR and translation engine for presentation images. Output valid JSON only.' },
+      { role:'user', content:[
+        { type:'text', text:prompt },
+        { type:'image_url', image_url:{ url:prepared.dataUrl, detail:'high' } },
+      ] },
+    ], 'documentLog');
+    return normalizeImageRegions(parseJsonResponse(out));
+  } catch (error) {
+    if (error.code !== 'CORPORATE_PROXY_BLOCK') throw error;
+    state.imageTransportBlocked = true;
+    log('documentLog', '检测到 HIS/SWG 阻止图片上传；已停止继续发送 Base64 图片，并自动切换为“本地 OCR + 纯文本模型翻译”。');
+    return await translateLocalOcrLines(task, prepared, targetLang, meta);
+  }
 }
 function renderModels() {
   const filter = $('modelFilter').value.trim().toLowerCase();
@@ -755,14 +982,27 @@ function promptImprove(sourceLang, targetLang, sourceText, translation, suggesti
     {role:'user', content:`Your task is to carefully read, then edit, a translation from ${sourceLang} to ${targetLang}, taking into account expert suggestions.${rulesText}\n<SOURCE_TEXT>\n${sourceText}\n</SOURCE_TEXT>\n<TRANSLATION>\n${translation}\n</TRANSLATION>\n<EXPERT_SUGGESTIONS>\n${suggestions}\n</EXPERT_SUGGESTIONS>\nOutput only the new translation and nothing else.`},
   ];
 }
-async function withRetry(fn, retries) {
+async function withRetry(fn, retries, logId) {
   let last;
-  for (let i = 0; i <= retries; i++) {
-    try { return await fn(); }
+  let i = 0;
+  let allowedRetries = Math.max(0, Number(retries) || 0);
+  while (i <= allowedRetries) {
+    try {
+      const cooldown = Math.max(0, state.upstreamCooldownUntil - Date.now());
+      if (cooldown) await sleep(cooldown);
+      return await fn();
+    }
     catch (error) {
       last = error;
-      if (i < retries) await sleep(800 * (i + 1));
+      if (error?.retryable) allowedRetries = Math.max(allowedRetries, 4);
+      if (i >= allowedRetries) break;
+      const exponential = Math.min(30000, 2000 * (2 ** i));
+      const delay = Math.max(Number(error?.retryAfterMs) || 0, exponential + Math.round(Math.random() * 600));
+      if (error?.retryable) state.upstreamCooldownUntil = Math.max(state.upstreamCooldownUntil, Date.now() + delay);
+      if (logId) log(logId, `${error.message || error} ${Math.ceil(delay / 1000)} 秒后进行第 ${i + 2} 次尝试。`);
+      await sleep(delay);
     }
+    i++;
   }
   throw last;
 }
@@ -1349,13 +1589,18 @@ async function translatePptxTask(task, targetLang, meta, standard) {
 async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
   const tasks = collectDocumentTasks(doc);
   const results = new Map();
+  const imageResultCache = new Map();
   let cursor = 0;
   async function worker() {
     while (cursor < tasks.length && !state.cancel) {
       const task = tasks[cursor++];
       try {
         if (task.kind === 'image') {
-          const regions = await withRetry(() => translatePptxImageTask(task, targetLang, meta), meta.retries);
+          const cacheKey = `${targetLang}:${task.targetPath || task.id}`;
+          if (!imageResultCache.has(cacheKey)) {
+            imageResultCache.set(cacheKey, withRetry(() => translatePptxImageTask(task, targetLang, meta), meta.retries, 'documentLog'));
+          }
+          const regions = await imageResultCache.get(cacheKey);
           results.set(task.id, { regions, text:'', warning:'', error:'' });
           log('documentLog', `图片识别完成 ${task.id}：${regions.length} 个文字区域。`);
           continue;
@@ -1375,7 +1620,7 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
                 customRules: meta.customRules,
                 standardTranslation: standard && meta.translationMemoryMode === 'review' ? standard.text : ''
               }, meta.workflowMode, 'documentLog')
-          ), meta.retries);
+          ), meta.retries, 'documentLog');
         }
         if (doc.type === 'pptx') {
           const checklistIssues = validatePptxTranslationChecklist(task, translated);
@@ -1387,7 +1632,7 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
                 protectedTerms: meta.protectedTerms,
                 customRules: meta.customRules,
                 standardTranslation: ''
-              }, meta.workflowMode, 'documentLog'), meta.retries);
+              }, meta.workflowMode, 'documentLog'), meta.retries, 'documentLog');
               fallbackLines.push(String(one || '').trim());
             }
             translated = rebalanceLinesToCount(fallbackLines.join('\n'), (task.lines || []).length || 1).join('\n');
@@ -1396,7 +1641,7 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
         const missing = validateProtectedTerms(task.source, translated, meta.protectedTerms);
         results.set(task.id, { text: translated, warning: missing.length ? '受保护术语缺失：' + missing.join(' / ') : '', error:'' });
       } catch (error) {
-        results.set(task.id, { text:'', warning:'', error:error.message || String(error) });
+        results.set(task.id, { text:'', warning:'', error:error.message || String(error), errorCode:error.code || '' });
         state.errors++;
         stat();
       } finally {
@@ -1407,7 +1652,9 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
       }
     }
   }
-  await Promise.all(Array.from({length: meta.concurrency}, () => worker()));
+  const concurrency = doc.type === 'pptx' && meta.translateImages ? 1 : meta.concurrency;
+  if (concurrency !== meta.concurrency) log('documentLog', '已启用图片翻译：本次任务自动使用单并发，避免多模态模型过载。');
+  await Promise.all(Array.from({length: concurrency}, () => worker()));
   return results;
 }
 function validatePptxResultCoverage(doc, results, includeImages) {
@@ -1420,12 +1667,21 @@ function validatePptxResultCoverage(doc, results, includeImages) {
   const failures = [];
   expected.forEach(task => {
     const result = results.get(task.id);
-    if (!result) failures.push(`${task.id}：缺少翻译结果`);
-    else if (result.error) failures.push(`${task.id}：${result.error}`);
-    else if (task.kind !== 'image' && !String(result.text || '').trim()) failures.push(`${task.id}：译文为空`);
+    if (!result) failures.push({ id:task.id, code:'MISSING_RESULT', message:'缺少翻译结果' });
+    else if (result.error) failures.push({ id:task.id, code:result.errorCode || 'TRANSLATION_ERROR', message:result.error });
+    else if (task.kind !== 'image' && !String(result.text || '').trim()) failures.push({ id:task.id, code:'EMPTY_TRANSLATION', message:'译文为空' });
   });
   if (failures.length) {
-    throw new Error(`PPTX 完整性检查未通过：${failures.length}/${expected.length} 个对象未成功翻译。为避免输出漏译页面，本次不生成 PPTX。\n${failures.slice(0, 12).join('\n')}`);
+    const grouped = new Map();
+    failures.forEach(item => grouped.set(item.code, (grouped.get(item.code) || 0) + 1));
+    const labels = {
+      UPSTREAM_OVERLOADED:'模型引擎过载', CORPORATE_PROXY_BLOCK:'企业安全代理拦截',
+      NETWORK_ERROR:'网络错误', OCR_TRANSLATION_INCOMPLETE:'OCR 译文不完整',
+      MISSING_RESULT:'缺少结果', EMPTY_TRANSLATION:'译文为空', TRANSLATION_ERROR:'其他翻译错误',
+    };
+    const summary = Array.from(grouped, ([code, count]) => `${labels[code] || code} ${count} 个`).join('；');
+    const examples = failures.slice(0, 12).map(item => `${item.id}：${item.message}`).join('\n');
+    throw new Error(`PPTX 完整性检查未通过：${failures.length}/${expected.length} 个对象未成功翻译（${summary}）。为避免输出漏译页面，本次不生成 PPTX。\n${examples}`);
   }
   return { expected:expected.length, images:expected.filter(item => item.kind === 'image').length };
 }
@@ -2112,6 +2368,11 @@ async function runDocumentTranslate() {
   state.cancel = false;
   state.running = true;
   state.documentDownloads = [];
+  await closePptxOcrWorker();
+  state.visionImageCache = new Map();
+  state.pptxOcrCache = new Map();
+  state.imageTransportBlocked = false;
+  state.upstreamCooldownUntil = 0;
   $('zipDocumentBtn').classList.add('hidden');
   $('runDocumentBtn').disabled = true;
   $('cancelDocumentBtn').disabled = false;
@@ -2181,6 +2442,7 @@ async function runDocumentTranslate() {
     }
   }
   state.progressNote = '';
+  await closePptxOcrWorker();
   state.running = false;
   $('runDocumentBtn').disabled = false;
   $('cancelDocumentBtn').disabled = true;

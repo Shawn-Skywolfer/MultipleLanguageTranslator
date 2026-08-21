@@ -259,15 +259,15 @@
           <div class="field"><label>工作流模式</label><select id="docWorkflowMode"><option value="full">完整 DSL：初译 + 建议 + 改译</option><option value="fast">快速模式：直接最终翻译</option></select></div>
         </div>
         <div class="grid">
-          <div class="field"><label>并发数</label><select id="docConcurrency"><option>1</option><option selected>2</option><option>3</option><option>4</option></select></div>
-          <div class="field"><label>失败重试次数</label><select id="docRetries"><option>0</option><option selected>1</option><option>2</option><option>3</option></select></div>
+          <div class="field"><label>并发数</label><select id="docConcurrency"><option selected>1</option><option>2</option><option>3</option><option>4</option></select></div>
+          <div class="field"><label>失败重试次数</label><select id="docRetries"><option>0</option><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select></div>
         </div>
         <div class="grid">
           <div class="field"><label class="toggle-label"><input type="checkbox" id="docOutputMarkdown" checked /> <span>导出双语 Markdown（仅 PDF）</span></label></div>
           <div class="field"><label class="toggle-label"><input type="checkbox" id="docOutputDocx" checked /> <span>导出双语 DOCX（仅 PDF）</span></label></div>
           <div class="field"><label class="toggle-label"><input type="checkbox" id="docOutputHtml" checked /> <span>导出图文对照 HTML（仅 PDF）</span></label></div>
         </div>
-        <div class="field"><label class="toggle-label"><input type="checkbox" id="docTranslateImages" checked /> <span>使用多模态模型翻译 PPT 图片中的文字</span></label><div class="mini">模型会识别图片中文字及位置，并在译文页的对应区域覆盖译文。启用后必须使用多模态模型。</div></div>
+        <div class="field"><label class="toggle-label"><input type="checkbox" id="docTranslateImages" checked /> <span>使用多模态模型翻译 PPT 图片中的文字</span></label><div class="mini">发送前会自动压缩图片；如企业安全代理拦截图片上传，会自动切换为本地 OCR + 纯文本模型翻译。图片任务固定单并发并对 429 进行指数退避。</div></div>
         <div class="notice yellow">PPTX 会输出“原始页保留 + 每页后新增 1 页译文页”的翻译版 PPTX。普通文本框、表格单元格和图片文字都会纳入完整性检查；任何对象翻译失败时将阻止导出，避免生成漏译文件。导出前还会校验 OOXML、关系文件和幻灯片结构。</div>
       </div>
     </div>
