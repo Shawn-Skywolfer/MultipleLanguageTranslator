@@ -2050,6 +2050,59 @@ function removeChildrenByLocalNames(parent, names) {
     if (names.includes(child.localName)) parent.removeChild(child);
   });
 }
+function directChild(parent, name, namespaceURI = '') {
+  if (!parent) return null;
+  return Array.from(parent.children).find(child => child.localName === name && (!namespaceURI || child.namespaceURI === namespaceURI)) || null;
+}
+function ensureSingleLineSpacing(paragraph, xmlDoc) {
+  if (!paragraph || paragraph.namespaceURI !== DRAWING_NS) return;
+  let pPr = directChild(paragraph, 'pPr', DRAWING_NS);
+  if (!pPr) {
+    pPr = xmlDoc.createElementNS(DRAWING_NS, 'a:pPr');
+    paragraph.insertBefore(pPr, paragraph.firstChild);
+  }
+  Array.from(pPr.children).filter(child => child.localName === 'lnSpc').forEach(child => pPr.removeChild(child));
+  const lnSpc = xmlDoc.createElementNS(DRAWING_NS, 'a:lnSpc');
+  const spcPct = xmlDoc.createElementNS(DRAWING_NS, 'a:spcPct');
+  spcPct.setAttribute('val', '100000');
+  lnSpc.appendChild(spcPct);
+  pPr.insertBefore(lnSpc, pPr.firstChild);
+}
+function enforceSingleLineSpacing(root, xmlDoc) {
+  localNameNodes(root, 'p').filter(node => node.namespaceURI === DRAWING_NS).forEach(paragraph => ensureSingleLineSpacing(paragraph, xmlDoc));
+}
+function isTitleShape(sp) {
+  const nvSpPr = directChild(sp, 'nvSpPr');
+  const nvPr = directChild(nvSpPr, 'nvPr');
+  const placeholder = directChild(nvPr, 'ph');
+  const placeholderType = String(attrAny(placeholder, ['type']) || '').toLowerCase();
+  if (placeholderType === 'title' || placeholderType === 'ctrtitle') return true;
+  const cNvPr = directChild(nvSpPr, 'cNvPr');
+  if (/(?:^|[\s_-])(title|标题)(?:[\s_-]|$)/i.test(String(attrAny(cNvPr, ['name']) || ''))) return true;
+  const txBody = directChild(sp, 'txBody');
+  const spPr = directChild(sp, 'spPr');
+  const xfrm = directChild(spPr, 'xfrm', DRAWING_NS);
+  const off = directChild(xfrm, 'off', DRAWING_NS);
+  const top = Number(attrAny(off, ['y']));
+  const fontSizes = localNameNodes(txBody, 'rPr').map(node => Number(attrAny(node, ['sz']))).filter(value => Number.isFinite(value) && value > 0);
+  const maxFontSize = fontSizes.length ? Math.max(...fontSizes) : 0;
+  return Number.isFinite(top) && top >= 0 && top <= 685800 && maxFontSize >= 2000;
+}
+function setTitleAutoWrap(sp, xmlDoc) {
+  if (!isTitleShape(sp)) return;
+  const txBody = directChild(sp, 'txBody');
+  if (!txBody) return;
+  let bodyPr = directChild(txBody, 'bodyPr', DRAWING_NS);
+  if (!bodyPr) {
+    bodyPr = xmlDoc.createElementNS(DRAWING_NS, 'a:bodyPr');
+    txBody.insertBefore(bodyPr, txBody.firstChild);
+  }
+  bodyPr.setAttribute('wrap', 'square');
+}
+function applyPptxSlideLayoutRules(slideXml) {
+  enforceSingleLineSpacing(slideXml, slideXml);
+  localNameNodes(slideXml, 'sp').forEach(sp => setTitleAutoWrap(sp, slideXml));
+}
 function ensureTextRun(paragraph, xmlDoc) {
   let run = Array.from(paragraph.children).find(child => child.localName === 'r');
   if (run) return run;
@@ -2485,6 +2538,29 @@ function validateDiagramTextBodies(xml, partName) {
     }
   }
 }
+function validateSingleLineSpacing(xml, partName) {
+  for (const paragraph of localNameNodes(xml, 'p').filter(node => node.namespaceURI === DRAWING_NS)) {
+    const pPr = directChild(paragraph, 'pPr', DRAWING_NS);
+    const lnSpc = directChild(pPr, 'lnSpc', DRAWING_NS);
+    const spcPct = directChild(lnSpc, 'spcPct', DRAWING_NS);
+    if (!spcPct || attrAny(spcPct, ['val']) !== '100000') {
+      throw pptxValidationError('PPTX_LINE_SPACING', `PPTX 包校验失败：${partName} 存在未固定为 1 倍行距的段落。`);
+    }
+  }
+}
+function validateTitleAutoWrap(xml, partName) {
+  for (const sp of localNameNodes(xml, 'sp').filter(isTitleShape)) {
+    const txBody = directChild(sp, 'txBody');
+    const bodyPr = directChild(txBody, 'bodyPr', DRAWING_NS);
+    if (!bodyPr || attrAny(bodyPr, ['wrap']) !== 'square') {
+      throw pptxValidationError('PPTX_TITLE_WRAP', `PPTX 包校验失败：${partName} 存在未启用自动换行的标题。`);
+    }
+  }
+}
+function validatePptxSlideLayoutRules(xml, partName) {
+  validateSingleLineSpacing(xml, partName);
+  validateTitleAutoWrap(xml, partName);
+}
 async function validateGeneratedPptxBlob(blob, expectedSlides) {
   const bytes = await pptxBytes(blob);
   const envelope = validateZipEnvelope(bytes);
@@ -2551,6 +2627,24 @@ async function validateGeneratedPptxBlob(blob, expectedSlides) {
   });
   const slidePartNames = names.filter(name => /^ppt\/slides\/slide\d+\.xml$/i.test(name));
   if (slidePartNames.length !== expectedSlides) throw pptxValidationError('PPTX_SLIDE_PART_COUNT', `PPTX 包校验失败：预期 ${expectedSlides} 个幻灯片部件，实际 ${slidePartNames.length} 个。`);
+  const slidePartOrder = relIds.map(relId => {
+    const rel = presentationRelMap.get(relId);
+    return resolveZipPath('ppt/_rels/presentation.xml.rels', attrAny(rel, ['Target']));
+  });
+  for (let index = 0; index < slidePartOrder.length; index++) {
+    const partName = slidePartOrder[index];
+    const slideXml = xmlMap.get(partName);
+    if (!slideXml) throw pptxValidationError('PPTX_SLIDE_RELATIONSHIP', `PPTX 包校验失败：译文页部件 ${partName} 不存在。`);
+    validatePptxSlideLayoutRules(slideXml, partName);
+    const slideRelPath = partName.replace('ppt/slides/', 'ppt/slides/_rels/') + '.rels';
+    const slideRelXml = xmlMap.get(slideRelPath);
+    if (!slideRelXml) continue;
+    for (const diagramRel of localNameNodes(slideRelXml, 'Relationship').filter(rel => /\/diagram(?:Data|Drawing)$/.test(attrAny(rel, ['Type'])))) {
+      const diagramPart = resolveZipPath(slideRelPath, attrAny(diagramRel, ['Target']));
+      const diagramXml = xmlMap.get(diagramPart);
+      if (diagramXml) validateSingleLineSpacing(diagramXml, diagramPart);
+    }
+  }
   const order = { xfrm:0, prstGeom:1, custGeom:1, noFill:2, solidFill:2, gradFill:2, blipFill:2, pattFill:2, grpFill:2, ln:3, effectLst:4, effectDag:4, scene3d:5, sp3d:6, extLst:7 };
   const slideObjectCountMap = new Map();
   for (const [name, xml] of xmlMap) {
@@ -2563,12 +2657,7 @@ async function validateGeneratedPptxBlob(blob, expectedSlides) {
       if (ranks.some((rank, index) => index && ranks[index - 1] > rank)) throw pptxValidationError('PPTX_OOXML_ORDER', `PPTX 包校验失败：${name} 存在不符合 OOXML 顺序的 spPr。`);
     }
   }
-  const slideObjectCounts = relIds.map(relId => {
-    const rel = presentationRelMap.get(relId);
-    const target = attrAny(rel, ['Target']);
-    const partName = resolveZipPath('ppt/_rels/presentation.xml.rels', target);
-    return slideObjectCountMap.get(partName);
-  });
+  const slideObjectCounts = slidePartOrder.map(partName => slideObjectCountMap.get(partName));
   if (slideObjectCounts.some(count => !Number.isInteger(count))) {
     throw pptxValidationError('PPTX_SLIDE_OBJECT_COUNT', 'PPTX 包校验失败：无法按演示顺序统计逐页对象数量。');
   }
@@ -2588,6 +2677,17 @@ async function buildTranslatedPptxAttempt(doc, lang, results, profile) {
   const slideRels = localNameNodes(relRoot, 'Relationship').filter(rel => /\/slide$/.test(attrAny(rel, ['Type'])));
   const originalSlideIdEntries = Array.from(sldIdLst.children).filter(node => node.localName === 'sldId');
   const originalSlidePaths = Object.keys(zip.files).filter(name => /^ppt\/slides\/slide\d+\.xml$/i.test(name));
+  for (const originalSlidePath of originalSlidePaths) {
+    const originalSlideXml = xmlFrom(await zip.file(originalSlidePath).async('text'));
+    applyPptxSlideLayoutRules(originalSlideXml);
+    zip.file(originalSlidePath, new XMLSerializer().serializeToString(originalSlideXml));
+  }
+  const originalDiagramPaths = Object.keys(zip.files).filter(name => /^ppt\/diagrams\/(?:data|drawing)\d+\.xml$/i.test(name));
+  for (const originalDiagramPath of originalDiagramPaths) {
+    const originalDiagramXml = xmlFrom(await zip.file(originalDiagramPath).async('text'));
+    enforceSingleLineSpacing(originalDiagramXml, originalDiagramXml);
+    zip.file(originalDiagramPath, new XMLSerializer().serializeToString(originalDiagramXml));
+  }
   let nextSlideIndex = Math.max(...originalSlidePaths.map(path => Number(path.match(/slide(\d+)\.xml/i)[1])), 0);
   let nextRelId = nextNumericId(localNameNodes(relRoot, 'Relationship').map(rel => attrAny(rel, ['Id'])), 0);
   let nextSlideId = nextNumericId(originalSlideIdEntries.map(node => attrAny(node, ['id'])), 255);
@@ -2623,6 +2723,7 @@ async function buildTranslatedPptxAttempt(doc, lang, results, profile) {
     });
     const imageRegions = addImageTranslationOverlays(translatedXml, slideData, results);
     if (imageRegions) log('documentLog', `PPTX 第 ${slideData.index} 页：写入 ${imageRegions} 个图片译文区域。`);
+    applyPptxSlideLayoutRules(translatedXml);
     regenerateOfficeUniqueIds(translatedXml);
     zip.file(newSlidePath, new XMLSerializer().serializeToString(translatedXml));
     if (zip.file(slideData.relPath)) {
@@ -2641,6 +2742,7 @@ async function buildTranslatedPptxAttempt(doc, lang, results, profile) {
           const result = results.get(item.id);
           if (result && !result.error && result.text && textNodes[item.nodeIndex]) setTextNodeContent(textNodes[item.nodeIndex], result.text);
         });
+        enforceSingleLineSpacing(diagramXml, diagramXml);
         zip.file(newPart, new XMLSerializer().serializeToString(diagramXml));
         const originalPartRel = originalPart.replace('ppt/diagrams/', 'ppt/diagrams/_rels/') + '.rels';
         const newPartRel = newPart.replace('ppt/diagrams/', 'ppt/diagrams/_rels/') + '.rels';
