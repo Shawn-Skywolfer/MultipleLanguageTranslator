@@ -2078,7 +2078,15 @@ function isTitleShape(sp) {
   const placeholderType = String(attrAny(placeholder, ['type']) || '').toLowerCase();
   if (placeholderType === 'title' || placeholderType === 'ctrtitle') return true;
   const cNvPr = directChild(nvSpPr, 'cNvPr');
-  return /(?:^|[\s_-])(title|标题)(?:[\s_-]|$)/i.test(String(attrAny(cNvPr, ['name']) || ''));
+  if (/(?:^|[\s_-])(title|标题)(?:[\s_-]|$)/i.test(String(attrAny(cNvPr, ['name']) || ''))) return true;
+  const txBody = directChild(sp, 'txBody');
+  const spPr = directChild(sp, 'spPr');
+  const xfrm = directChild(spPr, 'xfrm', DRAWING_NS);
+  const off = directChild(xfrm, 'off', DRAWING_NS);
+  const top = Number(attrAny(off, ['y']));
+  const fontSizes = localNameNodes(txBody, 'rPr').map(node => Number(attrAny(node, ['sz']))).filter(value => Number.isFinite(value) && value > 0);
+  const maxFontSize = fontSizes.length ? Math.max(...fontSizes) : 0;
+  return Number.isFinite(top) && top >= 0 && top <= 685800 && maxFontSize >= 2000;
 }
 function setTitleAutoWrap(sp, xmlDoc) {
   if (!isTitleShape(sp)) return;

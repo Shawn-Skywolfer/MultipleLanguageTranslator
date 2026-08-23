@@ -270,13 +270,26 @@ function autofitNames(bodyPr) {
     ], undefined, P),
     el('p:txBody', {}, [bodyBodyPr, paragraph(150000)], undefined, P),
   ], undefined, P);
-  const slide = el('p:sld', {}, [el('p:spTree', {}, [title, body], undefined, P)], undefined, P);
+  const manualTitleBodyPr = el('a:bodyPr', { wrap:'none' }, [], undefined, A);
+  const manualTitle = el('p:sp', {}, [
+    el('p:nvSpPr', {}, [
+      el('p:cNvPr', { id:'3', name:'TextBox 3' }, [], undefined, P),
+      el('p:cNvSpPr', {}, [], undefined, P),
+      el('p:nvPr', {}, [], undefined, P),
+    ], undefined, P),
+    el('p:spPr', {}, [el('a:xfrm', {}, [el('a:off', { x:'0', y:'237744' }, [], undefined, A)], undefined, A)], undefined, P),
+    el('p:txBody', {}, [manualTitleBodyPr, el('a:p', {}, [
+      el('a:r', {}, [el('a:rPr', { sz:'2400' }, [], undefined, A), el('a:t', {}, [], 'Manual heading', A)], undefined, A),
+    ], undefined, A)], undefined, P),
+  ], undefined, P);
+  const slide = el('p:sld', {}, [el('p:spTree', {}, [title, body, manualTitle], undefined, P)], undefined, P);
   slide.createElementNS = xmlDoc.createElementNS;
   context.applyPptxSlideLayoutRules(slide);
   assert.equal(titleBodyPr.getAttribute('wrap'), 'square', 'title placeholder must use PowerPoint automatic wrapping');
+  assert.equal(manualTitleBodyPr.getAttribute('wrap'), 'square', 'large top-positioned editable headings must also wrap automatically');
   assert.equal(bodyBodyPr.getAttribute('wrap'), 'none', 'non-title wrapping behavior must remain unchanged');
   const percentages = context.localNameNodes(slide, 'spcPct').map(node => node.getAttribute('val'));
-  assert.deepEqual(percentages, ['100000', '100000'], 'all paragraphs must use exactly 100% line spacing');
+  assert.deepEqual(percentages, ['100000', '100000', '100000'], 'all paragraphs must use exactly 100% line spacing');
   assert.equal(context.validatePptxSlideLayoutRules(slide, 'ppt/slides/slide19.xml'), undefined);
   context.localNameNodes(slide, 'spcPct')[0].setAttribute('val', '150000');
   assert.throws(
