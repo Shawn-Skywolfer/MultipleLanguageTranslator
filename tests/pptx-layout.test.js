@@ -9,10 +9,11 @@ const vm = require('node:vm');
 
 // ---- 最小 XML DOM stub，覆盖 app.js 中 PPTX 写出路径用到的 API ----
 class StubElement {
-  constructor(qualifiedName) {
+  constructor(qualifiedName, namespaceURI = '') {
     this.nodeType = 1;
     this.qualifiedName = qualifiedName;
     this.localName = qualifiedName.includes(':') ? qualifiedName.split(':').pop() : qualifiedName;
+    this.namespaceURI = namespaceURI;
     this.attrs = new Map();
     this.childNodes = [];
     this.parentNode = null;
@@ -72,9 +73,9 @@ class StubElement {
     return out;
   }
 }
-const xmlDoc = { createElementNS: (ns, qualifiedName) => new StubElement(qualifiedName) };
-function el(qualifiedName, attrs = {}, children = [], text) {
-  const node = new StubElement(qualifiedName);
+const xmlDoc = { createElementNS: (ns, qualifiedName) => new StubElement(qualifiedName, ns) };
+function el(qualifiedName, attrs = {}, children = [], text, namespaceURI = '') {
+  const node = new StubElement(qualifiedName, namespaceURI);
   Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
   children.forEach(child => node.appendChild(child));
   if (text !== undefined) node.textContent = text;
@@ -94,12 +95,39 @@ const code = [
   slice('\nfunction rebalanceLinesToCount', '\nfunction buildPdfMarkdown'),
   slice('\nfunction nextNumericId', '\nasync function buildTranslatedPptx'),
 ].join('\n');
-const context = { console, log() {}, state: {}, Math, Number, String, Array, Object, JSON };
+const context = {
+  console, log() {}, state: {}, Math, Number, String, Array, Object, JSON,
+  DRAWING_NS:'http://schemas.openxmlformats.org/drawingml/2006/main',
+  DIAGRAM_NS:'http://schemas.openxmlformats.org/drawingml/2006/diagram',
+};
 vm.createContext(context);
 vm.runInContext(code, context);
 const { lockTranslatedBodyLayout, updateTranslatedShape } = context;
 assert.equal(typeof lockTranslatedBodyLayout, 'function');
 assert.equal(typeof updateTranslatedShape, 'function');
+
+// SmartArt 的 dgm:t 是文本体容器，只有内部 DrawingML a:t 才是可替换的叶子文本。
+{
+  const A = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+  const DGM = 'http://schemas.openxmlformats.org/drawingml/2006/diagram';
+  const leaf = el('a:t', {}, [], '央企国家队', A);
+  const container = el('dgm:t', {}, [
+    el('a:bodyPr', {}, [], undefined, A),
+    el('a:lstStyle', {}, [], undefined, A),
+    el('a:p', {}, [el('a:r', {}, [el('a:rPr', {}, [], undefined, A), leaf], undefined, A)], undefined, A),
+  ], undefined, DGM);
+  const root = el('dgm:dataModel', {}, [container], undefined, DGM);
+  assert.deepEqual(context.diagramTextNodes(root), [leaf]);
+  context.setTextNodeContent(leaf, 'Central SOE national team');
+  assert.deepEqual(container.children.map(node => node.localName), ['bodyPr', 'lstStyle', 'p'], 'SmartArt text-body structure must be preserved');
+  assert.equal(context.validateDiagramTextBodies(root, 'ppt/diagrams/data1.xml'), undefined);
+
+  const broken = el('dgm:dataModel', {}, [el('dgm:t', {}, [], 'bad direct text', DGM)], undefined, DGM);
+  assert.throws(
+    () => context.validateDiagramTextBodies(broken, 'ppt/diagrams/data1.xml'),
+    error => error.code === 'PPTX_SMARTART_TEXT_BODY'
+  );
+}
 
 function autofitNames(bodyPr) {
   return bodyPr.children.map(child => child.localName).filter(name => ['noAutofit', 'normAutofit', 'spAutoFit'].includes(name));

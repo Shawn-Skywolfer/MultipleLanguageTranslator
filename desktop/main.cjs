@@ -75,22 +75,34 @@ function base64Text(value) {
   return Buffer.from(String(value), 'utf8').toString('base64');
 }
 
-function powerPointScript(filePath, repairPath) {
-  const repairBlock = repairPath ? `
-$repairPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${base64Text(repairPath)}'))
-$presentation = $powerPoint.Presentations.Open2007($filePath, 0, 0, 0, -1)
-$presentation.SaveCopyAs($repairPath, 24, 0)
-` : `
-$presentation = $powerPoint.Presentations.Open2007($filePath, -1, 0, 0, 0)
-`;
+function powerPointScript(filePath, options = {}) {
+  const outputPath = String(options.outputPath || '');
+  const expectedSlides = Math.max(0, Number(options.expectedSlides) || 0);
+  const openAndRepair = options.openAndRepair ? '-1' : '0';
+  const saveBlock = outputPath ? `
+$outputPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${base64Text(outputPath)}'))
+$presentation.SaveCopyAs($outputPath, 24, 0)
+` : '';
   return `$ErrorActionPreference = 'Stop'
 $filePath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${base64Text(filePath)}'))
+$expectedSlides = ${expectedSlides}
 $powerPoint = $null
 $presentation = $null
 try {
   try { $powerPoint = New-Object -ComObject PowerPoint.Application }
   catch { [Console]::Error.WriteLine('POWERPOINT_UNAVAILABLE'); exit 31 }
-  ${repairBlock}
+  $presentation = $powerPoint.Presentations.Open2007($filePath, -1, 0, 0, ${openAndRepair})
+  $actualSlides = [int]$presentation.Slides.Count
+  if ($expectedSlides -gt 0 -and $actualSlides -ne $expectedSlides) {
+    throw "PowerPoint 打开后的页数不一致：预期 $expectedSlides 页，实际 $actualSlides 页。PowerPoint 修复过程可能删除了页面。"
+  }
+  for ($index = 1; $index -le $actualSlides; $index++) {
+    $slide = $presentation.Slides.Item($index)
+    try { [void]$slide.Shapes.Count }
+    finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($slide) }
+  }
+  ${saveBlock}
+  [Console]::Out.WriteLine("POWERPOINT_SLIDES=$actualSlides")
   [Console]::Out.WriteLine('POWERPOINT_OK')
 }
 catch {
@@ -104,10 +116,10 @@ finally {
 }`;
 }
 
-function runPowerPoint(filePath, repairPath = '') {
+function runPowerPoint(filePath, options = {}) {
   return new Promise(resolve => {
     if (process.platform !== 'win32') return resolve({ ok:false, unavailable:true, error:'仅 Windows 支持 PowerPoint COM 验证。' });
-    const encoded = Buffer.from(powerPointScript(filePath, repairPath), 'utf16le').toString('base64');
+    const encoded = Buffer.from(powerPointScript(filePath, options), 'utf16le').toString('base64');
     const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], { windowsHide:true });
     let stdout = '';
     let stderr = '';
@@ -117,8 +129,10 @@ function runPowerPoint(filePath, repairPath = '') {
     child.on('error', error => { clearTimeout(timer); resolve({ ok:false, unavailable:true, error:error.message }); });
     child.on('close', code => {
       clearTimeout(timer);
+      const slideMatch = stdout.match(/POWERPOINT_SLIDES=(\d+)/);
       resolve({
         ok:code === 0 && stdout.includes('POWERPOINT_OK'),
+        slides:slideMatch ? Number(slideMatch[1]) : 0,
         unavailable:code === 31 || stderr.includes('POWERPOINT_UNAVAILABLE'),
         error:(stderr || stdout || `PowerPoint 验证进程退出码 ${code}`).trim(),
       });
@@ -126,22 +140,39 @@ function runPowerPoint(filePath, repairPath = '') {
   });
 }
 
-async function validateOrRepairWithPowerPoint(filePath) {
-  const normal = await runPowerPoint(filePath);
-  if (normal.ok) return { validated:true, repaired:false };
-  if (normal.unavailable) return { validated:false, repaired:false, unavailable:true, message:normal.error };
+async function validateOrRepairWithPowerPoint(filePath, expectedSlides) {
+  const normalizedPath = `${filePath}.powerpoint-normalized-${crypto.randomUUID()}.pptx`;
+  const normal = await runPowerPoint(filePath, { outputPath:normalizedPath, expectedSlides });
+  if (normal.ok) {
+    try {
+      const normalizedBytes = await fsp.readFile(normalizedPath);
+      validateZipEnvelope(normalizedBytes);
+      const normalizedProbe = await runPowerPoint(normalizedPath, { expectedSlides });
+      if (!normalizedProbe.ok) throw new Error(`PowerPoint 规范化后的文件复验失败：${normalizedProbe.error}`);
+      await writeAndReadBack(filePath, normalizedBytes);
+      const finalProbe = await runPowerPoint(filePath, { expectedSlides });
+      if (!finalProbe.ok) throw new Error(`最终文件复验失败：${finalProbe.error}`);
+      return { validated:true, repaired:false, normalized:true, slides:finalProbe.slides };
+    } finally {
+      await fsp.unlink(normalizedPath).catch(() => {});
+    }
+  }
+  await fsp.unlink(normalizedPath).catch(() => {});
+  if (normal.unavailable) {
+    throw new Error(`本机无法调用 Microsoft PowerPoint，不能完成真实打开验证：${normal.error}`);
+  }
   const repairPath = `${filePath}.powerpoint-repaired-${crypto.randomUUID()}.pptx`;
   try {
-    const repair = await runPowerPoint(filePath, repairPath);
+    const repair = await runPowerPoint(filePath, { outputPath:repairPath, openAndRepair:true, expectedSlides });
     if (!repair.ok) throw new Error(`PowerPoint Open and Repair 失败：${repair.error}`);
     const repairedBytes = await fsp.readFile(repairPath);
     validateZipEnvelope(repairedBytes);
-    const repairedProbe = await runPowerPoint(repairPath);
+    const repairedProbe = await runPowerPoint(repairPath, { expectedSlides });
     if (!repairedProbe.ok) throw new Error(`PowerPoint 修复后的文件仍无法正常打开：${repairedProbe.error}`);
     await writeAndReadBack(filePath, repairedBytes);
-    const finalProbe = await runPowerPoint(filePath);
+    const finalProbe = await runPowerPoint(filePath, { expectedSlides });
     if (!finalProbe.ok) throw new Error(`最终文件复验失败：${finalProbe.error}`);
-    return { validated:true, repaired:true };
+    return { validated:true, repaired:true, slides:finalProbe.slides };
   } finally {
     await fsp.unlink(repairPath).catch(() => {});
   }
@@ -197,6 +228,8 @@ let server;
 
 ipcMain.handle('pptx:save-verified', async (_event, payload) => {
   const bytes = Buffer.from(payload?.bytes || []);
+  const expectedSlides = Math.max(0, Number(payload?.expectedSlides) || 0);
+  if (!expectedSlides) throw new Error('缺少预期幻灯片页数，无法执行无丢页验证。');
   validateZipEnvelope(bytes);
   const selected = await dialog.showSaveDialog({
     title:'保存并验证 PowerPoint 文件',
@@ -209,7 +242,7 @@ ipcMain.handle('pptx:save-verified', async (_event, payload) => {
   if (backupPath) await fsp.copyFile(selected.filePath, backupPath);
   try {
     const saved = await writeAndReadBack(selected.filePath, bytes);
-    const powerPoint = await validateOrRepairWithPowerPoint(selected.filePath);
+    const powerPoint = await validateOrRepairWithPowerPoint(selected.filePath, expectedSlides);
     const finalBytes = await fsp.readFile(selected.filePath);
     validateZipEnvelope(finalBytes);
     if (backupPath) await fsp.unlink(backupPath).catch(() => {});
@@ -221,6 +254,7 @@ ipcMain.handle('pptx:save-verified', async (_event, payload) => {
       sha256:sha256(finalBytes),
       writeAttempt:saved.attempt,
       powerPointValidated:powerPoint.validated,
+      powerPointSlides:powerPoint.slides,
       powerPointUnavailable:!!powerPoint.unavailable,
       repaired:powerPoint.repaired,
       message:powerPoint.message || '',

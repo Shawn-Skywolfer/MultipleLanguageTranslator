@@ -13,6 +13,8 @@ const PROVIDER_PRESETS = [
   {name:'Kimi Code', baseUrl:'https://api.kimi.com/coding/v1', model:'kimi-for-coding', models:['kimi-for-coding']}
 ];
 const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+const DRAWING_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+const DIAGRAM_NS = 'http://schemas.openxmlformats.org/drawingml/2006/diagram';
 const BASE_LANGS = ['English','German','Spanish','French','Bulgarian','Czech','Greek','Italian','Dutch','Polish','Romanian','Turkish','Hungarian','Slovakian','Portuguese','Croatian','Danish','Swedish','Ukrainian'];
 const DEFAULT_LANGS = [...BASE_LANGS];
 const $ = id => document.getElementById(id);
@@ -171,6 +173,7 @@ async function saveAndVerifyPptxInDesktop(blob, name, expectedSlides) {
   const result = await window.desktopBridge.saveVerifiedPptx({
     suggestedName:name,
     bytes:new Uint8Array(await blob.arrayBuffer()),
+    expectedSlides,
   });
   if (result?.cancelled) return false;
   if (!result?.ok) throw new Error(result?.message || '桌面版保存失败。');
@@ -182,6 +185,9 @@ async function saveAndVerifyPptxInDesktop(blob, name, expectedSlides) {
   const persistedHash = await sha256Hex(persisted);
   if (!result.repaired && expectedHash && persistedHash !== expectedHash) throw new Error('桌面版落盘文件 SHA-256 与生成结果不一致。');
   const persistedReport = await validateGeneratedPptxBlob(persisted, expectedSlides);
+  if (JSON.stringify(persistedReport.slideObjectCounts) !== JSON.stringify(generatedReport.slideObjectCounts)) {
+    throw new Error('PowerPoint 规范化前后的逐页对象数量不一致；文件可能在修复时丢失内容，本次拒绝导出。');
+  }
   if (result.sha256 && persistedHash !== result.sha256) throw new Error('桌面主进程与页面计算的落盘 SHA-256 不一致。');
   log('documentLog', `PPTX 桌面验证完成：生成包 ${generatedReport.entries} 个条目；落盘包 ${persistedReport.entries} 个条目；PowerPoint ${result.powerPointValidated ? '真实打开通过' : '未执行'}。`);
   if (result.powerPointValidated) {
@@ -1506,6 +1512,9 @@ function localNameNodes(root, name) {
   if (!root) return [];
   return Array.from(root.getElementsByTagName('*')).filter(node => node.localName === name);
 }
+function diagramTextNodes(root) {
+  return localNameNodes(root, 't').filter(node => node.namespaceURI === DRAWING_NS);
+}
 function firstLocalName(root, name) {
   return localNameNodes(root, name)[0] || null;
 }
@@ -1697,11 +1706,11 @@ async function extractPptxDocument(file) {
     for (const [relId, diagramPath] of Object.entries(relMap).filter(([, path]) => /^ppt\/diagrams\/(?:data|drawing)\d+\.xml$/i.test(path))) {
       if (!zip.file(diagramPath)) continue;
       const diagramXml = xmlFrom(await zip.file(diagramPath).async('text'));
-      const items = localNameNodes(diagramXml, 't').map((node, nodeIndex) => ({
+      const items = diagramTextNodes(diagramXml).map((node, nodeIndex) => ({
         id:`slide-${slideIndex}-diagram-${relId}-text-${nodeIndex}`,
         kind:'diagram', relId, diagramPath, nodeIndex, text:String(node.textContent || '').trim(),
       })).filter(item => isLikelyText(item.text));
-      if (items.length) diagrams.push({ relId, diagramPath, items });
+      diagrams.push({ relId, diagramPath, items });
     }
     slides.push({ index:slideIndex, slidePath, relPath, shapes, images, diagrams, background });
   }
@@ -2463,6 +2472,19 @@ function relationshipSourcePath(relPath) {
   if (relPath === '_rels/.rels') return '';
   return relPath.replace('/_rels/', '/').replace(/\.rels$/i, '');
 }
+function validateDiagramTextBodies(xml, partName) {
+  const containers = localNameNodes(xml, 't').filter(node => node.namespaceURI === DIAGRAM_NS);
+  for (const container of containers) {
+    const children = Array.from(container.children);
+    const bodyPr = children.find(node => node.namespaceURI === DRAWING_NS && node.localName === 'bodyPr');
+    const lstStyle = children.find(node => node.namespaceURI === DRAWING_NS && node.localName === 'lstStyle');
+    const paragraphs = children.filter(node => node.namespaceURI === DRAWING_NS && node.localName === 'p');
+    const directText = Array.from(container.childNodes || []).some(node => node.nodeType === 3 && String(node.nodeValue || node.textContent || '').trim());
+    if (!bodyPr || !lstStyle || !paragraphs.length || directText) {
+      throw pptxValidationError('PPTX_SMARTART_TEXT_BODY', `PPTX 包校验失败：${partName} 的 SmartArt 文本容器结构已损坏。`);
+    }
+  }
+}
 async function validateGeneratedPptxBlob(blob, expectedSlides) {
   const bytes = await pptxBytes(blob);
   const envelope = validateZipEnvelope(bytes);
@@ -2512,6 +2534,9 @@ async function validateGeneratedPptxBlob(blob, expectedSlides) {
       if (target && !nameSet.has(resolved)) throw pptxValidationError('PPTX_RELATIONSHIP_TARGET', `PPTX 包校验失败：${name} 的关系 ${attrAny(rel, ['Id'])} 指向不存在的 ${resolved}。`);
     }
   }
+  for (const [name, xml] of xmlMap) {
+    if (/^ppt\/diagrams\/(?:data|drawing)[^/]*\.xml$/i.test(name)) validateDiagramTextBodies(xml, name);
+  }
   const presentation = xmlMap.get('ppt/presentation.xml');
   const ids = localNameNodes(firstLocalName(presentation, 'sldIdLst'), 'sldId');
   if (ids.length !== expectedSlides) throw pptxValidationError('PPTX_SLIDE_COUNT', `PPTX 包校验失败：预期 ${expectedSlides} 页，实际 ${ids.length} 页。`);
@@ -2527,16 +2552,27 @@ async function validateGeneratedPptxBlob(blob, expectedSlides) {
   const slidePartNames = names.filter(name => /^ppt\/slides\/slide\d+\.xml$/i.test(name));
   if (slidePartNames.length !== expectedSlides) throw pptxValidationError('PPTX_SLIDE_PART_COUNT', `PPTX 包校验失败：预期 ${expectedSlides} 个幻灯片部件，实际 ${slidePartNames.length} 个。`);
   const order = { xfrm:0, prstGeom:1, custGeom:1, noFill:2, solidFill:2, gradFill:2, blipFill:2, pattFill:2, grpFill:2, ln:3, effectLst:4, effectDag:4, scene3d:5, sp3d:6, extLst:7 };
+  const slideObjectCountMap = new Map();
   for (const [name, xml] of xmlMap) {
     if (!/^ppt\/slides\/slide\d+\.xml$/i.test(name)) continue;
     const shapeIds = localNameNodes(xml, 'cNvPr').map(node => attrAny(node, ['id']));
+    slideObjectCountMap.set(name, shapeIds.length);
     if (shapeIds.some(id => !id) || new Set(shapeIds).size !== shapeIds.length) throw pptxValidationError('PPTX_SHAPE_ID', `PPTX 包校验失败：${name} 存在空白或重复形状 ID。`);
     for (const spPr of localNameNodes(xml, 'spPr')) {
       const ranks = Array.from(spPr.children).map(node => order[node.localName]).filter(Number.isFinite);
       if (ranks.some((rank, index) => index && ranks[index - 1] > rank)) throw pptxValidationError('PPTX_OOXML_ORDER', `PPTX 包校验失败：${name} 存在不符合 OOXML 顺序的 spPr。`);
     }
   }
-  return { bytes:bytes.length, entries:envelope.entries, slides:ids.length };
+  const slideObjectCounts = relIds.map(relId => {
+    const rel = presentationRelMap.get(relId);
+    const target = attrAny(rel, ['Target']);
+    const partName = resolveZipPath('ppt/_rels/presentation.xml.rels', target);
+    return slideObjectCountMap.get(partName);
+  });
+  if (slideObjectCounts.some(count => !Number.isInteger(count))) {
+    throw pptxValidationError('PPTX_SLIDE_OBJECT_COUNT', 'PPTX 包校验失败：无法按演示顺序统计逐页对象数量。');
+  }
+  return { bytes:bytes.length, entries:envelope.entries, slides:ids.length, slideObjectCounts };
 }
 async function buildTranslatedPptxAttempt(doc, lang, results, profile) {
   const zip = await window.JSZip.loadAsync(doc.sourceBuffer);
@@ -2600,7 +2636,7 @@ async function buildTranslatedPptxAttempt(doc, lang, results, profile) {
         const baseName = originalPart.split('/').pop().replace(/\.xml$/i, '');
         const newPart = `ppt/diagrams/${baseName}_translated_${newSlideIndex}.xml`;
         const diagramXml = xmlFrom(await zip.file(originalPart).async('text'));
-        const textNodes = localNameNodes(diagramXml, 't');
+        const textNodes = diagramTextNodes(diagramXml);
         diagram.items.forEach(item => {
           const result = results.get(item.id);
           if (result && !result.error && result.text && textNodes[item.nodeIndex]) setTextNodeContent(textNodes[item.nodeIndex], result.text);

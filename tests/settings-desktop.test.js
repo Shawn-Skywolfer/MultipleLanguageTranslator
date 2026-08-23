@@ -19,9 +19,14 @@ assert.doesNotMatch(html, /data-tab="model"/, 'model settings must not remain a 
 assert.equal((html.match(/id="statPv"/g) || []).length, 1, 'DOM IDs must be unique');
 
 assert.match(desktop, /Presentations\.Open2007/, 'desktop validation must actually open the file in PowerPoint');
-assert.match(desktop, /SaveCopyAs\(\$repairPath, 24, 0\)/, 'PowerPoint repair must save an Open XML PPTX copy');
+assert.match(desktop, /SaveCopyAs\(\$outputPath, 24, 0\)/, 'PowerPoint validation must round-trip an Open XML PPTX copy');
 assert.match(desktop, /writeAndReadBack/, 'desktop save must reopen and hash persisted bytes');
 assert.match(desktop, /Open and Repair 失败/, 'PowerPoint repair errors must fail closed');
+assert.match(desktop, /PowerPoint 打开后的页数不一致/, 'PowerPoint repair must reject any deleted slides');
+assert.match(desktop, /本机无法调用 Microsoft PowerPoint，不能完成真实打开验证/, 'desktop export must fail closed when real PowerPoint validation is unavailable');
+assert.match(desktop, /缺少预期幻灯片页数/, 'desktop export must require an exact slide-count contract');
+assert.match(app, /expectedSlides,\s*\n\s*}\);/, 'renderer must send the exact expected slide count to PowerPoint');
+assert.match(app, /逐页对象数量不一致/, 'PowerPoint round-trip must reject lost slide objects');
 assert.match(desktop, /backup-\$\{crypto\.randomUUID\(\)\}/, 'an overwritten destination must be recoverable until all validation gates pass');
 assert.equal(packageJson.build.win.target[0], 'portable');
 assert.match(packageJson.build.win.artifactName, /\.exe$/);
