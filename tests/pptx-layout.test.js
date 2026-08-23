@@ -1,7 +1,7 @@
 'use strict';
 
-// 验证 PPTX 译文页的布局保真：字号 100% 不变、位置 100% 不变、
-// 文本框不换行（wrap="none"）、自动缩放被锁定（noAutofit / 固化 fontScale）。
+// 验证 PPTX 译文页的布局保真：字号与位置不变、标题自动换行、
+// 所有段落固定 1 倍行距，非标题文本框仍锁定自动缩放。
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -244,7 +244,48 @@ function autofitNames(bodyPr) {
   assert.ok(names.indexOf('solidFill') < names.indexOf('ln'), `solidFill must precede ln: ${names.join(',')}`);
 }
 
-// 9. ZIP 外壳：必须存在本地文件头与中央目录结束标记，截断包必须被拒绝
+// 9. 导出排版：标题自动换行；标题、正文及表格等所有 DrawingML 段落均固定 1 倍行距
+{
+  const A = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+  const P = 'http://schemas.openxmlformats.org/presentationml/2006/main';
+  const paragraph = spacing => el('a:p', {}, [
+    el('a:pPr', {}, [el('a:lnSpc', {}, [el('a:spcPct', { val:String(spacing) }, [], undefined, A)], undefined, A)], undefined, A),
+    el('a:r', {}, [el('a:rPr', {}, [], undefined, A), el('a:t', {}, [], 'Text', A)], undefined, A),
+  ], undefined, A);
+  const titleBodyPr = el('a:bodyPr', { wrap:'none' }, [], undefined, A);
+  const bodyBodyPr = el('a:bodyPr', { wrap:'none' }, [], undefined, A);
+  const title = el('p:sp', {}, [
+    el('p:nvSpPr', {}, [
+      el('p:cNvPr', { id:'1', name:'Title 1' }, [], undefined, P),
+      el('p:cNvSpPr', {}, [], undefined, P),
+      el('p:nvPr', {}, [el('p:ph', { type:'title' }, [], undefined, P)], undefined, P),
+    ], undefined, P),
+    el('p:txBody', {}, [titleBodyPr, paragraph(200000)], undefined, P),
+  ], undefined, P);
+  const body = el('p:sp', {}, [
+    el('p:nvSpPr', {}, [
+      el('p:cNvPr', { id:'2', name:'TextBox 2' }, [], undefined, P),
+      el('p:cNvSpPr', {}, [], undefined, P),
+      el('p:nvPr', {}, [el('p:ph', { type:'body' }, [], undefined, P)], undefined, P),
+    ], undefined, P),
+    el('p:txBody', {}, [bodyBodyPr, paragraph(150000)], undefined, P),
+  ], undefined, P);
+  const slide = el('p:sld', {}, [el('p:spTree', {}, [title, body], undefined, P)], undefined, P);
+  slide.createElementNS = xmlDoc.createElementNS;
+  context.applyPptxSlideLayoutRules(slide);
+  assert.equal(titleBodyPr.getAttribute('wrap'), 'square', 'title placeholder must use PowerPoint automatic wrapping');
+  assert.equal(bodyBodyPr.getAttribute('wrap'), 'none', 'non-title wrapping behavior must remain unchanged');
+  const percentages = context.localNameNodes(slide, 'spcPct').map(node => node.getAttribute('val'));
+  assert.deepEqual(percentages, ['100000', '100000'], 'all paragraphs must use exactly 100% line spacing');
+  assert.equal(context.validatePptxSlideLayoutRules(slide, 'ppt/slides/slide19.xml'), undefined);
+  context.localNameNodes(slide, 'spcPct')[0].setAttribute('val', '150000');
+  assert.throws(
+    () => context.validatePptxSlideLayoutRules(slide, 'ppt/slides/slide19.xml'),
+    error => error.code === 'PPTX_LINE_SPACING'
+  );
+}
+
+// 10. ZIP 外壳：必须存在本地文件头与中央目录结束标记，截断包必须被拒绝
 {
   const bytes = new Uint8Array(52);
   bytes.set([0x50, 0x4b, 0x03, 0x04], 0);
@@ -268,6 +309,8 @@ assert.doesNotMatch(src, /setTimeout\(\(\) => URL\.revokeObjectURL\([^)]*\), 200
 assert.match(src, /function pptxGenerationProfiles\(\)/, 'known generation failures should use bounded repair profiles');
 assert.match(src, /rememberPptxAttempt\(profile, error\)/, 'generation failures should be recorded for the next run');
 assert.match(src, /buildTranslatedPptxAttempt\(doc, lang, results, profile\)/, 'automatic retries must rebuild from the pristine source buffer');
+assert.match(src, /for \(const originalSlidePath of originalSlidePaths\)/, 'formatting rules must cover original and translated slides in the generated deck');
+assert.match(src, /for \(const originalDiagramPath of originalDiagramPaths\)/, '1x line spacing must cover original and translated SmartArt parts');
 assert.match(src, /PPTX 翻译自修复第 \$\{repairRound\}\/2 轮/, 'failed translation objects must receive bounded whole-task repair rounds');
 
-console.log('pptx checks passed: layout fidelity, OOXML order, ZIP envelope, CRC validation, and verified-save safeguards covered.');
+console.log('pptx checks passed: title wrapping, 1x line spacing, layout fidelity, OOXML order, CRC, and verified-save safeguards covered.');
