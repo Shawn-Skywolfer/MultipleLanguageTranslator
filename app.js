@@ -13,7 +13,8 @@ const PROVIDER_PRESETS = [
   {name:'Kimi Code', baseUrl:'https://api.kimi.com/coding/v1', model:'kimi-for-coding', models:['kimi-for-coding']}
 ];
 const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
-const DEFAULT_LANGS = ['German','Spanish','French','Bulgarian','Czech','Greek','Italian','Dutch','Polish','Romanian','Turkish','Hungarian','Slovakian','Portuguese','Croatian','Danish','Swedish','Ukrainian'];
+const BASE_LANGS = ['English','German','Spanish','French','Bulgarian','Czech','Greek','Italian','Dutch','Polish','Romanian','Turkish','Hungarian','Slovakian','Portuguese','Croatian','Danish','Swedish','Ukrainian'];
+const DEFAULT_LANGS = [...BASE_LANGS];
 const $ = id => document.getElementById(id);
 const state = {
   models: [...DEFAULT_MODELS],
@@ -41,6 +42,9 @@ const state = {
 };
 const OPS_LOG_KEY = 'dp_ops_logs_v1';
 const PPTX_REPAIR_MEMORY_KEY = 'dp_pptx_repair_memory_v1';
+const SETTINGS_KEY = 'difyDslTranslatorSettings';
+const SETTINGS_EXPORT_TYPE = 'multiple-language-translator-settings';
+const SETTINGS_VERSION = 2;
 
 if (window.pdfjsLib) {
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
@@ -161,8 +165,43 @@ async function writeAndVerifyPptx(handle, blob, expectedSlides) {
   }
   throw lastError;
 }
+async function saveAndVerifyPptxInDesktop(blob, name, expectedSlides) {
+  const expectedHash = await sha256Hex(blob);
+  const generatedReport = await validateGeneratedPptxBlob(blob, expectedSlides);
+  const result = await window.desktopBridge.saveVerifiedPptx({
+    suggestedName:name,
+    bytes:new Uint8Array(await blob.arrayBuffer()),
+  });
+  if (result?.cancelled) return false;
+  if (!result?.ok) throw new Error(result?.message || '桌面版保存失败。');
+  const persistedBytes = result.bytes instanceof Uint8Array ? result.bytes : new Uint8Array(result.bytes || []);
+  const persisted = new Blob([persistedBytes], { type:blob.type });
+  if (persisted.size !== blob.size && !result.repaired) {
+    throw new Error(`桌面版落盘文件大小异常：预期 ${blob.size} 字节，实际 ${persisted.size} 字节。`);
+  }
+  const persistedHash = await sha256Hex(persisted);
+  if (!result.repaired && expectedHash && persistedHash !== expectedHash) throw new Error('桌面版落盘文件 SHA-256 与生成结果不一致。');
+  const persistedReport = await validateGeneratedPptxBlob(persisted, expectedSlides);
+  if (result.sha256 && persistedHash !== result.sha256) throw new Error('桌面主进程与页面计算的落盘 SHA-256 不一致。');
+  log('documentLog', `PPTX 桌面验证完成：生成包 ${generatedReport.entries} 个条目；落盘包 ${persistedReport.entries} 个条目；PowerPoint ${result.powerPointValidated ? '真实打开通过' : '未执行'}。`);
+  if (result.powerPointValidated) {
+    showToast(`PPTX 已保存，并由 Microsoft PowerPoint 真实打开验证通过${result.repaired ? '（PowerPoint 已自动修复并复验）' : ''}。`, 'ok');
+  } else {
+    showToast('PPTX 已通过多轮 ZIP/CRC/OOXML 与落盘校验；本机未检测到 PowerPoint，无法声明“PowerPoint 真实打开通过”。', 'warn');
+  }
+  return true;
+}
 async function downloadBlob(blob, name, options) {
   const expectedSlides = Number(options?.expectedSlides) || 0;
+  if (expectedSlides && window.desktopBridge?.saveVerifiedPptx) {
+    try {
+      return await saveAndVerifyPptxInDesktop(blob, name, expectedSlides);
+    } catch (error) {
+      showToast('PPTX 桌面保存或 PowerPoint 验证失败，本次不会把文件标记为成功：' + (error.message || error), 'error');
+      log('documentLog', `PPTX 桌面验证失败：${name}；${error.message || error}`);
+      return false;
+    }
+  }
   if (expectedSlides && window.isSecureContext && typeof window.showSaveFilePicker === 'function') {
     try {
       const handle = await window.showSaveFilePicker(pptxSavePickerOptions(name));
@@ -279,10 +318,21 @@ function tabs() {
     btn.setAttribute('aria-selected', 'true');
     $('tab-' + btn.dataset.tab).classList.add('active');
     const sharedRulesSection = $('sharedRulesSection');
-    if (sharedRulesSection) {
-      sharedRulesSection.classList.toggle('hidden', btn.dataset.tab === 'model');
-    }
+    if (sharedRulesSection) sharedRulesSection.classList.remove('hidden');
   }));
+}
+function openSettings() {
+  const dialog = $('settingsDialog');
+  if (!dialog) return;
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else dialog.setAttribute('open', '');
+  setTimeout(() => $('providerName')?.focus(), 0);
+}
+function closeSettings() {
+  const dialog = $('settingsDialog');
+  if (!dialog) return;
+  if (typeof dialog.close === 'function') dialog.close();
+  else dialog.removeAttribute('open');
 }
 function sanitizeBaseUrl(url) {
   return String(url || '').trim().replace(/\/+$/, '');
@@ -729,34 +779,107 @@ function renderProviderPresets() {
     box.appendChild(btn);
   });
 }
-function saveSettings() {
-  const data = {
-    providerName: $('providerName').value,
-    baseUrl: $('baseUrl').value,
-    modelId: $('modelId').value,
-    temperature: $('temperature').value,
-    maxTokens: $('maxTokens').value,
-    modelCapability: $('modelCapability').value,
-    saveKey: $('saveKey').checked,
-    apiKey: $('saveKey').checked ? cleanApiKey($('apiKey').value) : '',
+function fieldValue(id) {
+  return $(id)?.value ?? '';
+}
+function fieldChecked(id) {
+  return !!$(id)?.checked;
+}
+function setFieldValue(id, value) {
+  if ($(id) && value !== undefined && value !== null) $(id).value = String(value);
+}
+function setFieldChecked(id, value) {
+  if ($(id) && value !== undefined) $(id).checked = !!value;
+}
+function collectAppSettings(options = {}) {
+  const includeApiKey = !!options.includeApiKey;
+  return {
+    type:SETTINGS_EXPORT_TYPE,
+    version:SETTINGS_VERSION,
+    exportedAt:new Date().toISOString(),
+    model:{
+      providerName:fieldValue('providerName'), baseUrl:fieldValue('baseUrl'), modelId:fieldValue('modelId'),
+      temperature:fieldValue('temperature'), maxTokens:fieldValue('maxTokens'), modelCapability:fieldValue('modelCapability'),
+      saveKey:fieldChecked('saveKey'), apiKey:includeApiKey ? cleanApiKey(fieldValue('apiKey')) : '',
+    },
+    translation:{
+      targetLanguages:selectedLangs(), customLanguages:DEFAULT_LANGS.filter(lang => !BASE_LANGS.includes(lang)),
+      sourceLang:fieldValue('sourceLang'), docSourceLang:fieldValue('docSourceLang'),
+      workflowMode:fieldValue('workflowMode'), docWorkflowMode:fieldValue('docWorkflowMode'), outputMode:fieldValue('outputMode'),
+      concurrency:fieldValue('concurrency'), retries:fieldValue('retries'), docConcurrency:fieldValue('docConcurrency'), docRetries:fieldValue('docRetries'),
+      countryGlobal:fieldValue('countryGlobal'), translationMemoryMode:fieldValue('translationMemoryMode'),
+      protectedTerms:fieldValue('protectedTerms'), customRules:fieldValue('customRules'),
+      docOutputMarkdown:fieldChecked('docOutputMarkdown'), docOutputDocx:fieldChecked('docOutputDocx'),
+      docOutputHtml:fieldChecked('docOutputHtml'), docTranslateImages:fieldChecked('docTranslateImages'),
+    },
   };
-  localStorage.setItem('difyDslTranslatorSettings', JSON.stringify(data));
-  log('modelLog', '已保存配置到本机浏览器。' + ($('saveKey').checked ? ' API Key 已保存。' : ' API Key 未保存。'));
+}
+function normalizeImportedSettings(data) {
+  if (data?.type === SETTINGS_EXPORT_TYPE && Number(data.version) >= 2) return data;
+  if (data && typeof data === 'object' && ('providerName' in data || 'modelId' in data)) {
+    return { type:SETTINGS_EXPORT_TYPE, version:1, model:data, translation:{} };
+  }
+  throw new Error('不是有效的 MultipleLanguageTranslator 配置文件。');
+}
+function applyAppSettings(rawData) {
+  const data = normalizeImportedSettings(rawData);
+  const model = data.model || {};
+  const translation = data.translation || {};
+  ['providerName','baseUrl','modelId','temperature','maxTokens','modelCapability','apiKey'].forEach(key => setFieldValue(key, model[key]));
+  setFieldChecked('saveKey', model.saveKey || !!model.apiKey);
+  (translation.customLanguages || []).forEach(lang => {
+    const value = String(lang || '').trim();
+    if (value && !DEFAULT_LANGS.some(existing => existing.toLowerCase() === value.toLowerCase())) DEFAULT_LANGS.push(value);
+  });
+  renderLanguages();
+  selectLangs(Array.isArray(translation.targetLanguages) && translation.targetLanguages.length ? translation.targetLanguages : ['English']);
+  ['sourceLang','docSourceLang','workflowMode','docWorkflowMode','outputMode','concurrency','retries','docConcurrency','docRetries','countryGlobal','translationMemoryMode','protectedTerms','customRules']
+    .forEach(key => setFieldValue(key, translation[key]));
+  ['docOutputMarkdown','docOutputDocx','docOutputHtml','docTranslateImages'].forEach(key => setFieldChecked(key, translation[key]));
+  updateLangSummaries();
+  updateModelStatus(fieldValue('apiKey').trim() ? 'untested' : 'unset');
+  return data;
+}
+function saveSettings() {
+  const data = collectAppSettings({ includeApiKey:fieldChecked('saveKey') });
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(data));
+  log('modelLog', '已保存全部配置到本机。' + (fieldChecked('saveKey') ? ' API Key 已保存。' : ' API Key 未保存。'));
+  showToast('全部配置已保存到本机。', 'ok');
 }
 function loadSettings() {
   try {
-    const raw = localStorage.getItem('difyDslTranslatorSettings');
-    if (!raw) return;
-    const data = JSON.parse(raw);
-    ['providerName','baseUrl','modelId','temperature','maxTokens','modelCapability','apiKey'].forEach(key => {
-      if (data[key] !== undefined && $(key)) $(key).value = data[key];
-    });
-    $('saveKey').checked = !!data.saveKey;
-  } catch (_) {}
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw) applyAppSettings(JSON.parse(raw));
+  } catch (error) {
+    console.warn('Unable to load settings:', error);
+  }
+}
+async function exportSettings() {
+  const includeApiKey = fieldChecked('exportApiKey');
+  const data = collectAppSettings({ includeApiKey });
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type:'application/json;charset=utf-8' });
+  await downloadBlob(blob, `translator-settings-${new Date().toISOString().slice(0, 10)}.json`);
+  log('modelLog', `已导出全部配置。${includeApiKey ? '文件包含 API Key，请妥善保管。' : '文件不包含 API Key。'}`);
+  showToast('配置文件已导出。', 'ok');
+}
+async function importSettings(file) {
+  if (!file) return;
+  try {
+    const data = applyAppSettings(JSON.parse(await file.text()));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(collectAppSettings({ includeApiKey:!!data.model?.apiKey })));
+    log('modelLog', `已从 ${file.name} 导入全部配置。`);
+    showToast('全部配置已导入并保存。', 'ok');
+  } catch (error) {
+    showToast('配置导入失败：' + (error.message || error), 'error');
+    log('modelLog', '配置导入失败：' + (error.message || error));
+  } finally {
+    if ($('importSettingsFile')) $('importSettingsFile').value = '';
+  }
 }
 function forgetSettings() {
-  localStorage.removeItem('difyDslTranslatorSettings');
+  localStorage.removeItem(SETTINGS_KEY);
   log('modelLog', '已清除本机保存的配置。');
+  showToast('本机保存的配置已清除。', 'ok');
 }
 async function refreshModels() {
   setLog('modelLog', '正在刷新模型列表...');
@@ -1200,6 +1323,7 @@ async function runTranslate() {
   if (!langs.length) { showToast('请至少选择一个目标语言。'); focusSharedRules(); return; }
   if (!$('apiKey').value.trim() && !(state.translationMemory.size && $('translationMemoryMode').value === 'direct')) {
     showToast('请先填写 API Key，或上传标准翻译库并选择命中后直接使用。', 'error');
+    openSettings();
     return;
   }
   state.cancel = false;
@@ -1718,6 +1842,36 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
   const concurrency = doc.type === 'pptx' && meta.translateImages ? 1 : meta.concurrency;
   if (concurrency !== meta.concurrency) log('documentLog', '已启用图片翻译：本次任务自动使用单并发，避免多模态模型过载。');
   await Promise.all(Array.from({length: concurrency}, () => worker()));
+  if (doc.type === 'pptx' && !state.cancel) {
+    for (let repairRound = 1; repairRound <= 2; repairRound++) {
+      const failedTasks = tasks.filter(task => {
+        const item = results.get(task.id);
+        return !item || item.error || (task.kind !== 'image' && !String(item.text || '').trim());
+      });
+      if (!failedTasks.length) break;
+      log('documentLog', `PPTX 翻译自修复第 ${repairRound}/2 轮：将 ${failedTasks.length} 个失败对象改为单并发、快速模式重新执行。`);
+      for (const task of failedTasks) {
+        if (state.cancel) break;
+        try {
+          if (task.kind === 'image') {
+            const regions = await withRetry(() => translatePptxImageTask(task, targetLang, meta), Math.max(2, meta.retries), 'documentLog');
+            results.set(task.id, { regions, text:'', warning:`第 ${repairRound} 轮自修复成功`, error:'' });
+          } else {
+            const repairMeta = { ...meta, workflowMode:'fast', retries:Math.max(2, meta.retries) };
+            const translated = await withRetry(() => translatePptxTask(task, targetLang, repairMeta, null), repairMeta.retries, 'documentLog');
+            const issues = validatePptxTranslationChecklist(task, translated);
+            if (issues.length) throw new Error(`自修复译文质检仍未通过：${issues.join('；')}`);
+            const missing = validateProtectedTerms(task.source, translated, meta.protectedTerms);
+            results.set(task.id, { text:translated, warning:[`第 ${repairRound} 轮自修复成功`, missing.length ? '受保护术语缺失：' + missing.join(' / ') : ''].filter(Boolean).join('；'), error:'' });
+          }
+          log('documentLog', `PPTX 翻译自修复成功：${task.id}`);
+        } catch (error) {
+          results.set(task.id, { text:'', warning:'', error:error.message || String(error), errorCode:error.code || 'REPAIR_TRANSLATION_ERROR' });
+          log('documentLog', `PPTX 翻译自修复仍失败：${task.id}；${error.message || error}`);
+        }
+      }
+    }
+  }
   return results;
 }
 function validatePptxResultCoverage(doc, results, includeImages) {
@@ -2551,6 +2705,7 @@ async function runDocumentTranslate() {
   if (!langs.length) { showToast('请至少选择一个目标语言。'); focusSharedRules(); return; }
   if (!$('apiKey').value.trim() && !(state.translationMemory.size && $('translationMemoryMode').value === 'direct')) {
     showToast('请先填写 API Key，或上传标准翻译库并选择命中后直接使用。', 'error');
+    openSettings();
     return;
   }
   const hasPptx = state.documentFiles.some(item => /\.pptx$/i.test(item.name));
@@ -2661,10 +2816,10 @@ function setupDrop(id, callback, inputId) {
 function init() {
   tabs();
   loadOpsLogs();
-  loadSettings();
   renderProviderPresets();
   renderModels();
   renderLanguages();
+  loadSettings();
   updateTranslationMemoryInfo();
   updateTranslateInfo();
   updateDocumentInfo();
@@ -2674,6 +2829,15 @@ function init() {
   $('testBtn').addEventListener('click', testConnection);
   $('saveSettingsBtn').addEventListener('click', saveSettings);
   $('forgetSettingsBtn').addEventListener('click', forgetSettings);
+  $('openSettingsBtn').addEventListener('click', openSettings);
+  $('closeSettingsBtn').addEventListener('click', closeSettings);
+  $('exportSettingsBtn').addEventListener('click', exportSettings);
+  $('importSettingsBtn').addEventListener('click', () => $('importSettingsFile').click());
+  $('importSettingsFile').addEventListener('change', event => importSettings(event.target.files?.[0]));
+  $('modelStatusBadge').addEventListener('click', openSettings);
+  $('settingsDialog').addEventListener('click', event => {
+    if (event.target === $('settingsDialog')) closeSettings();
+  });
   $('exportOpsLogBtn').addEventListener('click', exportOpsLogs);
   $('clearOpsLogBtn').addEventListener('click', clearOpsLogs);
   $('selectAllLangBtn').addEventListener('click', () => { document.querySelectorAll('.langCheck').forEach(item => { item.checked = true; }); updateLangSummaries(); });

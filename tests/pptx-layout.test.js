@@ -240,5 +240,6 @@ assert.doesNotMatch(src, /setTimeout\(\(\) => URL\.revokeObjectURL\([^)]*\), 200
 assert.match(src, /function pptxGenerationProfiles\(\)/, 'known generation failures should use bounded repair profiles');
 assert.match(src, /rememberPptxAttempt\(profile, error\)/, 'generation failures should be recorded for the next run');
 assert.match(src, /buildTranslatedPptxAttempt\(doc, lang, results, profile\)/, 'automatic retries must rebuild from the pristine source buffer');
+assert.match(src, /PPTX 翻译自修复第 \$\{repairRound\}\/2 轮/, 'failed translation objects must receive bounded whole-task repair rounds');
 
 console.log('pptx checks passed: layout fidelity, OOXML order, ZIP envelope, CRC validation, and verified-save safeguards covered.');

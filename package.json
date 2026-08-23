@@ -1,0 +1,33 @@
+{
+  "name": "multiple-language-translator",
+  "version": "2.0.0",
+  "private": true,
+  "description": "CSV, PDF and verified PowerPoint translation workbench",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "test": "node --check app.js && node tests/i18n.test.js && node tests/multimodal.test.js && node tests/pdf-compare.test.js && node tests/pptx-layout.test.js && node tests/settings-desktop.test.js",
+    "desktop": "electron .",
+    "dist:win": "electron-builder --win portable --x64"
+  },
+  "devDependencies": {
+    "electron": "42.2.0",
+    "electron-builder": "26.15.7"
+  },
+  "build": {
+    "appId": "com.skywolfer.multiplelanguagetranslator",
+    "productName": "Multiple Language Translator",
+    "asar": true,
+    "files": [
+      "api/**/*",
+      "desktop/**/*",
+      "app.js",
+      "i18n.js",
+      "index.html",
+      "package.json"
+    ],
+    "win": {
+      "target": ["portable"],
+      "artifactName": "MultipleLanguageTranslator-Portable-${version}.exe"
+    }
+  }
+}

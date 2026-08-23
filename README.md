@@ -10,6 +10,9 @@
 - 多模态图片翻译：识别 PPTX 图片中的文字和位置，在译文页对应区域覆盖译文
 - 继续沿用三轮翻译审校工作流：`初译 -> 建议 -> 改译`
 - 支持标准翻译库、术语保护、自定义规则和多目标语言
+- 默认直接进入文档翻译；模型配置位于右上角独立“设置”入口
+- 模型、目标语言、重试、输出、术语和规则支持版本化 JSON 一键导入 / 导出
+- 提供 Windows 单文件便携版 `.exe`，无需安装
 
 ## 教程与演示
 
@@ -23,8 +26,11 @@
 ├── api/
 │   ├── chat-completions.js   # Vercel Function，代理模型 chat/completions
 │   └── models.js             # Vercel Function，代理模型列表
+├── desktop/                  # Electron 本地服务、落盘校验与 PowerPoint COM 验证
+├── .github/workflows/        # Windows Portable EXE 自动构建
 ├── app.js                    # 前端主逻辑：CSV/PDF/PPTX 解析、翻译编排、OCR、导出
 ├── index.html                # 前端页面
+├── package.json              # 桌面版与自动测试配置
 └── README.md
 ```
 
@@ -69,9 +75,29 @@
   - 字号 100% 一致：逐 run 保留原始 `sz` 字号；若原文本框已有 `normAutofit` 缩放（`fontScale`），会将该缩放固化进每个 run 的字号，再锁定为 `noAutofit`，避免译文变长后被 PowerPoint 二次缩小
   - 位置 100% 一致：不改动任何 `xfrm` 偏移与尺寸，文本框矩形、对齐与锚点全部继承原页；原文居中对齐的文本，译文与其在水平、垂直方向均保持同心
   - 译文不换行：译文文本框设置 `wrap="none"`，词汇长度差异沿原对齐方向向外延伸，不因换行改变行数与垂直位置
+- Windows 桌面版会在生成校验和落盘回读后，调用本机 Microsoft PowerPoint 以 `OpenAndRepair=false` 真实打开最终文件；只有打开成功才显示“PowerPoint 已验证”
+- 若首次真实打开失败，桌面版调用 PowerPoint 自带 Open and Repair，另存为 Open XML Presentation，再执行 ZIP/CRC/OOXML 校验和正常打开复验
 - 每个目标语言单独导出一个文件
 
 ## 运行方式
+
+### Windows 单文件便携版
+
+GitHub Actions 的 `Windows portable EXE` 工作流会生成：
+
+```text
+MultipleLanguageTranslator-Portable-2.0.0.exe
+```
+
+该文件无需安装即可运行，并在本机启动仅监听 `127.0.0.1` 的内置服务，因此模型代理、超大图片请求和 PPTX 保存不受 Vercel 4.5 MB 请求体限制。若电脑安装了 Microsoft PowerPoint，桌面版会把“真实打开”作为最终验证门禁。
+
+开发者本地运行或构建：
+
+```bash
+npm install
+npm run desktop
+npm run dist:win
+```
 
 ### 本地完整调试
 
@@ -114,7 +140,7 @@ Vercel 会自动：
 ## 使用说明
 
 1. 可通过页面右上角的“中文 / English”随时切换界面语言。
-2. 在“模型配置”中填写 Provider、Base URL、API Key 和模型 ID。
+2. 点击右上角“设置”，填写 Provider、Base URL、API Key 和模型 ID；也可以一键导入完整配置文件。
 3. 点击“连通测试”确认当前模型可用。
 4. 如需批量表格翻译，进入“CSV 批量翻译”页，上传 CSV 并设置列映射。
 5. 如需文档翻译，进入“文档翻译”页，上传 PDF 或 PPTX。
@@ -123,13 +149,15 @@ Vercel 会自动：
 8. 选择目标语言。
 9. 点击对应入口的开始按钮。
 10. 在结果表格中分别下载各目标语言输出件。
+11. Windows 便携版安装了 PowerPoint 时，看到“Microsoft PowerPoint 真实打开验证通过”后再对外交付。
 
 ## 说明与限制
 
 - PDF 的 Markdown / DOCX 输出优先强调“原文 / 译文对应关系”和审校效率；版面与图表原貌请使用图文对照 HTML 输出（原文页以截图呈现，零失真）。
 - 图文对照 HTML 中，位图图表内部的文字暂不做 OCR 翻译（图表以原样呈现）；矢量文字图表的文字会作为文本块参与翻译。
 - 勾选图文对照 HTML 时会逐页渲染页面截图，超大 PDF 的解析时间和输出文件体积会相应增加。
-- PPTX 现采用“保留原始页 + 每页后新增译文页”的输出方式，尽量保留原始图片、图形元素与文本框位置；复杂母版、矢量形状、动画和特殊排版仍可能存在兼容边界。
+- Web 版可执行 ZIP/CRC/OOXML 与落盘回读校验，但浏览器无法直接调用 Microsoft PowerPoint，因此只有 Windows 便携版且本机安装 PowerPoint 时，才能给出“PowerPoint 真实打开通过”的最终证明。
+- PPTX 现采用“保留原始页 + 每页后新增译文页”的输出方式，尽量保留原始图片、图形元素与文本框位置；复杂母版、矢量形状、动画和特殊排版仍可能存在兼容边界，桌面版会通过实际打开与必要时的 PowerPoint 自修复兜底。
 - 图片文字翻译需要支持 OpenAI-compatible 图片消息格式的多模态模型。模型列表的“多模态”标识根据名称推断，自定义模型可手动指定能力。
 - 企业网络若拦截图片请求，应用会自动回退到“本地 OCR + 纯文本模型翻译”；这种兼容模式仍会保留完整性检查，但图片文字识别精度取决于 Tesseract.js。
 - OCR 通过浏览器端 `Tesseract.js` 执行，首次加载语言包会较慢。
