@@ -24,7 +24,8 @@
     'CSV 批量翻译': 'CSV Batch Translation', 'PDF 文本抽取 + OCR': 'PDF Text Extraction + OCR',
     '双语 Markdown / DOCX': 'Bilingual Markdown / DOCX', 'PPTX 逐页译文页': 'PPTX Translated Slides', 'Vercel 友好': 'Vercel Ready',
     '页面访问量（PV）': 'Page Views (PV)', '已上传文件': 'Files Uploaded', '已生成输出': 'Outputs Generated', '失败 / 警告': 'Errors / Warnings',
-    '1. 模型配置': '1. Model Settings', '2. CSV 批量翻译': '2. CSV Translation', '3. 文档翻译': '3. Document Translation',
+    '1. 模型配置': '1. Model Settings', '1. 文档翻译': '1. Document Translation', '2. CSV 批量翻译': '2. CSV Translation', '3. 文档翻译': '3. Document Translation',
+    '设置': 'Settings', '⚙ 设置': '⚙ Settings', '配置中心': 'Settings Center',
     'Provider 与模型配置': 'Provider & Model Settings',
     '浏览器只请求当前站点的 `/api/chat-completions` 和 `/api/models`，再由 Vercel Functions 转发到你配置的 Provider，因此不依赖浏览器直连 CORS。': 'The browser only calls this site’s `/api/chat-completions` and `/api/models` endpoints. Vercel Functions forward requests to your configured provider, avoiding browser-side CORS restrictions.',
     'Provider 名称': 'Provider Name', '当前模型 ID': 'Current Model ID', 'Temperature（留空则不传）': 'Temperature (leave blank to omit)', 'Max Tokens（自动兼容）': 'Max Tokens (auto-compatible)',
@@ -32,6 +33,10 @@
     '多模态': 'Multimodal', '文本': 'Text',
     '模型列表中的“多模态”标识为名称推断；自定义模型可在这里手动指定。': 'The Multimodal badge is inferred from the model name. You can manually specify the capability for a custom model.',
     '连通测试': 'Test Connection', '刷新模型列表': 'Refresh Models', '保存配置到本机': 'Save Settings Locally', '清除本机保存': 'Clear Saved Settings',
+    '全部配置导入 / 导出': 'Import / Export All Settings',
+    '一键保存或迁移模型、目标语言、重试参数、输出选项、术语和自定义规则。默认不会导出 API Key。': 'Save or migrate the model, target languages, retry parameters, output options, terminology, and custom rules in one step. The API key is excluded by default.',
+    '导出文件中包含 API Key（敏感信息）': 'Include the API key in the exported file (sensitive)',
+    '一键导出全部配置': 'Export All Settings', '一键导入全部配置': 'Import All Settings',
     '常用 Provider 快速配置': 'Provider Presets', '只填充 Provider 名称、Base URL、模型 ID 和候选模型列表，不覆盖 API Key。': 'Fills in the provider name, Base URL, model ID, and candidate model list without replacing your API key.',
     '保存 API Key 到本机浏览器 localStorage': 'Save API key in browser localStorage',
     '当前实现默认走站内代理，更适合直接部署到 Vercel。部署后只需填写你的 Provider 参数即可开始翻译。': 'Requests use the built-in proxy by default for easy Vercel deployment. After deployment, enter your provider settings to start translating.',
@@ -64,6 +69,7 @@
   };
 
   const attributeTranslations = {
+    '关闭设置': 'Close settings',
     '请粘贴 Key 本身；不要带 Bearer、中文空格、换行或备注文字': 'Paste the key only; do not include Bearer, spaces, line breaks, or notes',
     '输入 gpt / claude / gemini / deepseek / qwen 等': 'Enter gpt / claude / gemini / deepseek / qwen, etc.',
     '例如 Germany / Spain / France': 'For example: Germany / Spain / France',
