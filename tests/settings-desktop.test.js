@@ -19,6 +19,7 @@ assert.match(html, /data-tab="document">1\. 文档翻译/, 'the app must start i
 assert.doesNotMatch(html, /data-tab="model"/, 'model settings must not remain a primary workflow tab');
 assert.match(html, /class="workspace-grid"/, 'the upload and parameter panels need one aligned responsive workspace');
 assert.match(html, /class="card run-panel"/, 'run controls, progress, and status need one aligned execution panel');
+assert.match(html, /\.field\{display:grid;align-content:start;/, 'form rows must keep labels and controls top-aligned when a neighboring field contains help text');
 const ids = Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]);
 assert.equal(new Set(ids).size, ids.length, 'all DOM IDs must be unique');
 
