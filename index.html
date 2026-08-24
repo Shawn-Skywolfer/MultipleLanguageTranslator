@@ -13,8 +13,7 @@
     button:focus-visible,.file-label:focus-visible,.download-link:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid rgba(40,100,220,.22);outline-offset:2px}
     .app-header{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.94);border-bottom:1px solid var(--line);backdrop-filter:blur(16px)}
     .topbar{max-width:1320px;min-height:72px;margin:0 auto;padding:10px 24px;display:grid;grid-template-columns:minmax(190px,.8fr) auto minmax(360px,1fr);align-items:center;gap:20px}
-    .brand-lockup{display:flex;align-items:center;gap:11px;min-width:0}
-    .brand-mark{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;background:var(--brand);color:#fff;font-size:13px;font-weight:800;letter-spacing:-.03em;box-shadow:0 6px 14px rgba(40,100,220,.2);flex:none}
+    .brand-lockup{display:flex;align-items:center;min-width:0}
     .brand-copy{display:grid;gap:2px;min-width:0}.brand-copy strong{font-size:14px;line-height:1.2;white-space:nowrap}.brand-copy span{font-size:11px;color:var(--muted);white-space:nowrap}
     .header-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0}
     .wrap{max-width:1320px;margin:0 auto;padding:28px 24px 64px}
@@ -89,7 +88,6 @@
 <header class="app-header">
   <div class="topbar">
     <div class="brand-lockup" aria-label="Digital Power Translator">
-      <span class="brand-mark" aria-hidden="true">DP</span>
       <span class="brand-copy"><strong>Digital Power</strong><span>多格式翻译工作台</span></span>
     </div>
     <nav class="tabs" role="tablist" aria-label="翻译工作流">
