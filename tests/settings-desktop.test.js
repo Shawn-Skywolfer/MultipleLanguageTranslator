@@ -14,9 +14,13 @@ assert.match(app, /function collectAppSettings\(/, 'all settings need one export
 assert.match(app, /function applyAppSettings\(/, 'all settings need one import applicator');
 assert.match(html, /id="openSettingsBtn"/, 'settings need a dedicated entry');
 assert.match(html, /<dialog id="settingsDialog"/, 'settings need a dedicated dialog');
+assert.match(html, /<header class="app-header">[\s\S]*<div class="header-actions">[\s\S]*id="openSettingsBtn"/, 'settings entry must live in the right-side application header actions');
 assert.match(html, /data-tab="document">1\. 文档翻译/, 'the app must start in document translation, not settings');
 assert.doesNotMatch(html, /data-tab="model"/, 'model settings must not remain a primary workflow tab');
-assert.equal((html.match(/id="statPv"/g) || []).length, 1, 'DOM IDs must be unique');
+assert.match(html, /class="workspace-grid"/, 'the upload and parameter panels need one aligned responsive workspace');
+assert.match(html, /class="card run-panel"/, 'run controls, progress, and status need one aligned execution panel');
+const ids = Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]);
+assert.equal(new Set(ids).size, ids.length, 'all DOM IDs must be unique');
 
 assert.match(desktop, /Presentations\.Open2007/, 'desktop validation must actually open the file in PowerPoint');
 assert.match(desktop, /SaveCopyAs\(\$outputPath, 24, 0\)/, 'PowerPoint validation must round-trip an Open XML PPTX copy');

@@ -9,6 +9,13 @@
 
   const english = {
     'Digital Power 多格式翻译工作台': 'Digital Power Multi-format Translation Workbench',
+    '多格式翻译工作台': 'Multi-format Translation Workbench',
+    '翻译工作流': 'Translation workflow',
+    '集中管理模型连接、运行参数和配置迁移': 'Manage model connections, runtime parameters, and configuration migration in one place',
+    '关闭': 'Close', '显示': 'Show',
+    '模型发现与运行日志': 'Model Discovery & Activity Log',
+    '查看运行日志': 'View Activity Log',
+    '这里的设置会同时应用到文档翻译和 CSV 批量翻译。': 'These settings apply to both document translation and CSV batch translation.',
     '统一处理 `CSV`、`PDF` 和 `PPTX`。CSV 继续保留原有批量翻译能力；PDF 支持文字抽取与 OCR 回退，可导出双语 Markdown / DOCX 与图文对照 HTML；PPTX 保留原始页，并在每页后新增一页对应的高亮译文页。模型调用统一走站内 API 代理，适合 Vercel 一键部署。': 'Translate CSV, PDF, and PPTX files in one place. CSV supports batch translation; PDF supports text extraction with OCR fallback and exports bilingual Markdown/DOCX plus side-by-side HTML; PPTX preserves each original slide and adds a highlighted translated slide after it. Model requests use the built-in API proxy for easy Vercel deployment.',
     '图文对照 HTML': 'Side-by-side HTML', '标准库命中次数': 'Translation Memory Hits',
     '模型未配置': 'Model not configured', '模型未测试': 'Model not tested', '模型已连通': 'Model connected', '模型连接失败': 'Model connection failed',
