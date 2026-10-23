@@ -39,7 +39,7 @@ python "$SKILL_ROOT/scripts/translation_batches.py" status work/batches/plan.jso
 
 ## Worker 提示模板
 
-> 使用 `$document-translate`。仅完成 `<batch-id>`。读取 `<request-path>`，预期请求文件 SHA-256 为 `<request-sha256>`，计划路径为 `<plan-path>`。遵循其中的共享术语、目标语言和 rules。只翻译 tasks 中的 ID，邻接上下文只作理解，不放入结果。若含 review_pages，先渲染并视觉核对整个指定原页，之后才记录指定复核值；没有视觉能力时报告阻塞，不虚构完成。不要读取全文 manifest 或其他批次，不调用外部模型 API，不修改原始文件。候选 JSON 写入 `<candidate-path>`，按下面格式填入身份字段、全部分片译文及分配的页复核。执行 submit，通过后仅返回批次 ID、完成状态和结果路径；失败只返回错误摘要。
+> 使用 `$document-translate`。仅完成 `<batch-id>`。读取 `<request-path>`，预期请求文件 SHA-256 为 `<request-sha256>`，计划路径为 `<plan-path>`。遵循其中的共享术语、目标语言和 rules。只翻译 tasks 中的 ID，邻接上下文只作理解，不放入结果。输出用于原位覆盖；在完整保留事实、数字和术语的前提下表达紧凑，不能概括删减。若含 review_pages，先渲染并视觉核对整个指定原页，之后才记录指定复核值；没有视觉能力时报告阻塞，不虚构完成。不要读取全文 manifest 或其他批次，不调用外部模型 API，不修改原始文件。候选 JSON 写入 `<candidate-path>`，按下面格式填入身份字段、全部分片译文及分配的页复核。执行 submit，通过后仅返回批次 ID、完成状态和结果路径；失败只返回错误摘要。
 
 ```json
 {
@@ -69,7 +69,7 @@ python "$SKILL_ROOT/scripts/pdf_translate.py" validate work/manifest.json work/t
 python "$SKILL_ROOT/scripts/pdf_translate.py" export work/manifest.json work/translations.json --output-dir output
 ```
 
-只有缺失的批次需重做；完整有效结果直接复用。来源 PDF、manifest、术语文件或请求变化会拒绝继续，先创建新计划。若修改了全局术语，应重新核验所有受影响结果，不把旧版本结果硬塞入新计划。每个原块的分片按序重组，缺片、多片、空片、跨语言结果或重复复核都会阻止合并。
+只有缺失的批次需重做；完整有效结果直接复用。来源 PDF、manifest、术语文件或请求变化会拒绝继续，先创建新计划。若修改了全局术语，应重新核验所有受影响结果，不把旧版本结果硬塞入新计划。分片合并回原块后仍必须放回该块的原文文字框，不是一片一页。每个原块的分片按序重组，缺片、多片、空片、跨语言结果或重复复核都会阻止合并。
 
 主 Agent 逐批检查 glossary 的统一译法和相邻批次衔接，优先核验标题、表头、专有名词、数字和结论；只取该批原文和译文，避免最终检查时又突破 128K。自动覆盖检查不证明翻译准确，最终仍须视觉和语义核验。
 

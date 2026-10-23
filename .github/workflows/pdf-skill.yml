@@ -1,10 +1,10 @@
 name: PDF and Skill verification
 on:
   pull_request:
-    paths: ['app.js', 'tools/**', 'skills/**', 'tests/**', '.github/workflows/pdf-skill.yml']
+    paths: ['app.js', 'pdf-overlay.js', 'tools/**', 'skills/**', 'tests/**', '.github/workflows/pdf-skill.yml']
   push:
     branches: [main]
-    paths: ['app.js', 'tools/**', 'skills/**', 'tests/**', '.github/workflows/pdf-skill.yml']
+    paths: ['app.js', 'pdf-overlay.js', 'tools/**', 'skills/**', 'tests/**', '.github/workflows/pdf-skill.yml']
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -22,8 +22,15 @@ jobs:
       - run: npm test
       - run: python tests/pdf-cli.test.py
       - run: python tests/translation-batches.test.py
+      - name: Install PDF integration test dependencies
+        run: npm install --prefix "$RUNNER_TEMP/pdf-overlay-deps" --ignore-scripts --no-audit --no-fund pdf-lib@1.17.1 @napi-rs/canvas@0.1.100 pdfjs-dist@3.11.174
+      - name: Browser PDF core integration
+        env:
+          NODE_PATH: ${{ runner.temp }}/pdf-overlay-deps/node_modules
+        run: python tests/pdf-browser.test.py
       - name: Check distributed source consistency
         run: |
           cmp app.js skills/document-translate/assets/workbench/app.js
+          cmp pdf-overlay.js skills/document-translate/assets/workbench/pdf-overlay.js
           cmp tools/pdf_translate.py skills/document-translate/scripts/pdf_translate.py
           cmp tools/translation_batches.py skills/document-translate/scripts/translation_batches.py

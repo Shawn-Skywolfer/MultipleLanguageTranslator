@@ -7,6 +7,7 @@ on:
       - 'desktop/**'
       - 'api/**'
       - 'app.js'
+      - 'pdf-overlay.js'
       - 'index.html'
       - 'i18n.js'
       - 'package.json'

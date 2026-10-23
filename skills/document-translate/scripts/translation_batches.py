@@ -11,7 +11,7 @@ import tempfile
 
 from pdf_translate import load, sha, validate, write_json
 
-VERSION = 'document-translate/batches-v1'
+VERSION = 'document-translate/batches-v2'
 
 
 def digest(value):
@@ -98,7 +98,7 @@ def plan(args):
         raise ValueError('BATCH_PLAN_EXISTS: use status to resume, or choose a new directory.')
     folder.mkdir(parents=True, exist_ok=True)
     identity = dict(schema=VERSION, manifest_sha256=sha(manifest_path), source_sha256=manifest['sha256'],
-                    language=args.language, rules=rules, context_tokens=args.context_tokens,
+                    language=args.language, rules=rules, layout='in-place-white-black-overlay', context_tokens=args.context_tokens,
                     max_output_tokens=args.max_output_tokens, task_budget=budget,
                     system_reserve=args.system_reserve, safety_reserve=args.safety_reserve,
                     expansion_factor=args.expansion_factor, agents=args.agents)
@@ -112,7 +112,8 @@ def plan(args):
             parts = split_source(block['source'], max(64, budget - 768), rules['protected_terms'] + list(rules['glossary']))
             for index, source in enumerate(parts):
                 flat.append(dict(id=f'{block["id"]}__part_{index + 1:04d}', block_id=block['id'],
-                                 page=page['page'], part=index + 1, parts=len(parts), source=source))
+                                 page=page['page'], part=index + 1, parts=len(parts), source=source,
+                                 region={key:block[key] for key in ['bbox','font_size','rotation'] if key in block}))
     if len({x['id'] for x in flat}) != len(flat):
         raise ValueError('BATCH_DUPLICATE_ID: manifest contains duplicate block IDs.')
     batches, current = [], []
@@ -150,7 +151,7 @@ def plan(args):
                        source=manifest['source'], language=args.language, shared=rules,
                        tasks=batch['tasks'], review_pages=batch['review_pages'], read_only_context=neighbors,
                        max_output_tokens=args.max_output_tokens,
-                       instructions='Translate only assigned IDs. Preserve IDs, numbers and protected terms. Read-only neighbors are context only. Visually inspect assigned review pages. Write a candidate JSON; run submit to commit it. Do not read the full manifest, other jobs, or export files.')
+                       instructions='Translate only assigned IDs for in-place overlays. Be concise without omitting facts. Preserve IDs, numbers and protected terms. Read-only neighbors are context only. Visually inspect assigned review pages. Write a candidate JSON; run submit to commit it. Do not read the full manifest, other jobs, or export files.')
         if estimate(request) + args.system_reserve + args.safety_reserve + args.max_output_tokens > args.context_tokens:
             raise ValueError(f'BATCH_CONTEXT_EXCEEDED: {job_id}')
         request_path = folder / 'requests' / f'{job_id}.json'

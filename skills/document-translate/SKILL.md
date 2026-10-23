@@ -1,22 +1,22 @@
 ---
 name: document-translate
-description: Translate PDF, PPTX and CSV documents with source preservation, protected terms and export validation. Use for bilingual document translation, scanned PDF OCR, translated reports with charts, batch multilingual CSV, or PowerPoint translation through the MultipleLanguageTranslator workbench. Supports 128K-context models through bounded PDF batches, resumable checkpoints and host-native parallel agents, plus the bundled web/Windows workbench.
+description: Translate PDF, PPTX and CSV documents with source preservation, protected terms and export validation and in-place white-background/black-text PDF overlays. Use for bilingual document translation, scanned PDF OCR, translated reports with charts, batch multilingual CSV, or PowerPoint translation through the MultipleLanguageTranslator workbench. Supports 128K-context models through bounded PDF batches, resumable checkpoints and host-native parallel agents, plus the bundled web/Windows workbench.
 ---
 
 # 文档翻译大师
 
-使用当前 Agent 完成 PDF 翻译；让确定性脚本完成抽取、OCR、覆盖检查、分页、导出和回读验证。保留项目现有 CSV、PPTX 工作台能力。
+使用当前 Agent 完成 PDF 翻译；让确定性脚本完成抽取、OCR、覆盖检查、原位覆盖、导出和回读验证。保留项目现有 CSV、PPTX 工作台能力。
 
 ## 选择入口
 
 | 输入/需求 | 执行方式 | 输出 |
 |---|---|---|
-| PDF，无需另配模型 Key | 下述 Agent 原生流程 | 原页＋译文页 PDF、双语 Markdown、原页截图与译文对照 HTML、验证报告 |
-| PDF，需要 DOCX 或项目的模型评审流程 | 本地工作台 | 双语 DOCX、Markdown、对照 HTML |
+| PDF，无需另配模型 Key | 下述 Agent 原生流程 | 原页＋原位覆盖译文页 PDF、双语 Markdown、原位对照 HTML、验证报告 |
+| PDF，需要工作台操作或 DOCX | 本地工作台 | 原位对照 PDF / HTML、双语 DOCX / Markdown |
 | PPTX | 本地工作台；需真实 PowerPoint 验证时运行 Windows 桌面版 | 保留原页并插入译文页的 PPTX |
 | CSV | 本地工作台 | 项目原有多语言 CSV/ZIP 输出 |
 
-不要把 PDF 输出描述成原位重排或可编辑 PPTX。原页保持图表与版面，译文另页自动分页；长译文允许占多页。图片内的文字需要 OCR 和视觉核对。完整性检查只覆盖抽取到的内容，不证明 OCR 或翻译语义绝对正确。
+**PDF 必须严格输出 2N 页：原页 1、原位译文页 1、原页 2、原位译文页 2……。** 译文页从原页复制，保留尺寸、旋转、裁剪、图表和背景；只在原文文字坐标内加白底并叠黑色译文。按原始字号自动缩小，框不扩大，不添加续页，不改成从上至下的阅读稿。极端长译文在最小字号仍放不下时，报告具体块 ID，忠实精炼后重试；禁止截断、删事实或静默转用其他版式。不要把 PDF 描述成可编辑 PPTX。图片内的文字必须有 OCR 坐标并视觉核对。
 
 ## PDF：无需 API Key 的执行流程
 
@@ -29,7 +29,7 @@ description: Translate PDF, PPTX and CSV documents with source preservation, pro
 python "$SKILL_ROOT/scripts/pdf_translate.py" extract input.pdf --manifest work/manifest.json --ocr auto --ocr-language chi_sim+eng
 ```
 
-`auto` 对含图片、无文字页做 OCR；混排页保留原生文字并识别图片区域。OCR 异常立即停止。不要以 `--ocr never` 绕过识别失败来交付完整翻译。
+旧版 manifest 和批次需重新提取/规划，不能使用旧阅读稿的无坐标缓存。提取结果保留原始字号、文字旋转和未旋转页面的文字框；不同列及表格单元格保持分开。`auto` 对含图片、无文字页做 OCR；混排页保留原生文字并识别图片区域。OCR 异常立即停止。不要以 `--ocr never` 绕过识别失败来交付完整翻译。
 
 3. **默认按 128K 上下文、最大 8192 输出、最多 3 个并行 Agent 运行。** 不把全文 manifest、捆绑源码或全部译文读入主 Agent。读取 [128K 分批与多 Agent 执行](references/parallel-translation.md)，先用脚本生成任务，再只读取状态摘要：
 
@@ -58,9 +58,9 @@ python "$SKILL_ROOT/scripts/pdf_translate.py" validate work/manifest.json work/t
 python "$SKILL_ROOT/scripts/pdf_translate.py" export work/manifest.json work/translations.json --output-dir output
 ```
 
-脚本在临时目录生成 PDF，重新打开，核对源页数、每个译文块的可提取文本，并渲染全部页面；对每个保留原页做像素比较；检查通过后才发布。翻译页自动续页，不能裁掉长译文。
+脚本在临时目录生成固定 2N 页 PDF，使用原文坐标白底黑字覆盖并自适应缩小字体；默认最小 3.5pt。分别检查纯译文图层的逐块可提取内容、最终页数与尺寸/旋转/裁剪，以及原页全部像素、译文页覆盖区域以外的像素。白底只能覆盖已声明的文字区域，不得遮住旁边图表。检查通过后才发布。最小字号仍放不下则按 PDF_TEXT_DOES_NOT_FIT 返回具体块，不增加页数；先忠实精炼译文后最多重试两次。
 
-8. 再渲染最终 PDF，视觉检查全部译文页是否有缺字、重叠、裁切、异常换行和阅读顺序错误；抽查术语、金额、日期和表格关系。修正译文或布局再完整导出。提供最终文件及简短验证结论；不要声称经过 Acrobat/PowerPoint 实机打开，除非确实执行过。
+8. 再渲染最终 PDF，按原页/译文页逐对视觉检查坐标是否精准、白底是否盖住原字、字体是否可读、图表和表格线是否保留，以及缺字、重叠、裁切和异常换行；抽查术语、金额、日期和表格关系。修正译文或布局再完整导出。提供最终文件及简短验证结论；不要声称经过 Acrobat/PowerPoint 实机打开，除非确实执行过。
 
 ## 项目工作台：CSV / PPTX / PDF DOCX
 

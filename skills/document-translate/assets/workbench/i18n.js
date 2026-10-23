@@ -8,6 +8,7 @@
   const originalAttributes = new WeakMap();
 
   const english = {
+    '导出原位对照 PDF（白底黑字覆盖原文）': 'Export in-place bilingual PDF (black text on white overlays)',
     'Digital Power 多格式翻译工作台': 'Digital Power Multi-format Translation Workbench',
     '多格式翻译工作台': 'Multi-format Translation Workbench',
     '翻译工作流': 'Translation workflow',
@@ -16,7 +17,7 @@
     '模型发现与运行日志': 'Model Discovery & Activity Log',
     '查看运行日志': 'View Activity Log',
     '这里的设置会同时应用到文档翻译和 CSV 批量翻译。': 'These settings apply to both document translation and CSV batch translation.',
-    '统一处理 `CSV`、`PDF` 和 `PPTX`。CSV 继续保留原有批量翻译能力；PDF 支持文字抽取与 OCR 回退，可导出双语 Markdown / DOCX 与图文对照 HTML；PPTX 保留原始页，并在每页后新增一页对应的高亮译文页。模型调用统一走站内 API 代理，适合 Vercel 一键部署。': 'Translate CSV, PDF, and PPTX files in one place. CSV supports batch translation; PDF supports text extraction with OCR fallback and exports bilingual Markdown/DOCX plus side-by-side HTML; PPTX preserves each original slide and adds a highlighted translated slide after it. Model requests use the built-in API proxy for easy Vercel deployment.',
+    '统一处理 `CSV`、`PDF` 和 `PPTX`。CSV 继续保留原有批量翻译能力；PDF 支持文字抽取与带坐标的 OCR，可导出白底黑字原位对照 PDF / HTML 及双语 Markdown / DOCX；PPTX 保留原始页，并在每页后新增一页对应的高亮译文页。模型调用统一走站内 API 代理，适合 Vercel 一键部署。': 'Translate CSV, PDF, and PPTX files in one place. CSV supports batch translation; PDF supports text extraction and positioned OCR, exporting in-place black-on-white PDF/HTML and bilingual Markdown/DOCX; PPTX preserves each original slide and adds a highlighted translated slide after it. Model requests use the built-in API proxy for easy Vercel deployment.',
     '图文对照 HTML': 'Side-by-side HTML', '标准库命中次数': 'Translation Memory Hits',
     '模型未配置': 'Model not configured', '模型未测试': 'Model not tested', '模型已连通': 'Model connected', '模型连接失败': 'Model connection failed',
     '打包下载全部（ZIP）': 'Download All (ZIP)', '打包完成，已开始下载。': 'ZIP ready; download started.',
@@ -55,7 +56,7 @@
     '输出格式': 'Output Format', '宽表：每个目标语言新增一列': 'Wide: Add one column per target language', '长表：每个目标语言生成一行': 'Long: Add one row per target language', '并发数': 'Concurrency', '失败重试次数': 'Retry Attempts',
     '开始批量翻译': 'Start Batch Translation', '停止': 'Stop', '尚未开始。': 'Not started.', 'CSV 翻译结果': 'CSV Translation Results',
     '文件': 'File', '状态': 'Status', '任务数': 'Tasks', '说明': 'Details', '下载': 'Download', '还没有 CSV 翻译结果。': 'No CSV translation results yet.',
-    '上传文档': 'Upload Documents', '支持 `PDF` 和 `PPTX`。PDF 会优先做文字抽取，文本不足时自动回退到 OCR；PPTX 会保留原始页，并在每页后新增对应的高亮译文页。': 'Supports PDF and PPTX. PDFs use text extraction first and automatically fall back to OCR when needed. PPTX files preserve each original slide and add a highlighted translated slide after it.',
+    '上传文档': 'Upload Documents', '支持 `PDF` 和 `PPTX`。PDF 保留原页，每页后增加一张白底黑字原位覆盖译文页，字体自动适配原文区域；PPTX 保留原始页并新增对应译文页。': 'Supports PDF and PPTX. PDFs use text extraction first and automatically fall back to OCR when needed. PPTX files preserve each original slide and add a highlighted translated slide after it.',
     '上传 PDF / PPTX': 'Upload PDF / PPTX', '也可以把 PDF 或 PPTX 文件拖到这里，或点击选择': 'You can also drop PDF or PPTX files here, or click to choose', '尚未上传文档。': 'No documents uploaded.', '文档翻译参数': 'Document Translation Settings',
     '导出双语 Markdown（仅 PDF）': 'Export Bilingual Markdown (PDF only)', '导出双语 DOCX（仅 PDF）': 'Export Bilingual DOCX (PDF only)', '导出图文对照 HTML（仅 PDF）': 'Export Side-by-side HTML (PDF only)',
     'PPTX 会输出“原始页保留 + 每页后新增 1 页译文页”的翻译版 PPTX。译文页会直接复用原始幻灯片中的图片、图形元素和文本框位置，只替换对应文本框文字，并用黄色底色、黑色文字高亮。': 'The translated PPTX preserves every original slide and adds one translated slide after it. Translated slides reuse the original images, shapes, and text-box positions, replacing only the text and highlighting it with a yellow background and black type.',

@@ -1,4 +1,8 @@
-# PDF 数据与故障处理
+# PDF 原位覆盖、数据与故障处理
+
+默认固定 2N 页，按原页/对应原位译文页交替。译文页复制原件并仅在各原文文字框内绘制白底黑字；源页尺寸、旋转、CropBox 与覆盖区外图表不变。字号从原始字号自动缩小到默认最小 3.5pt，文本不溢出，也不生成续页。需要更小字号须由用户明确选择可读性取舍，不能为了过检自动调到接近 0。
+
+重新 extract 旧版 manifest：新版包含 `coordinate_space=unrotated-top-left`、bbox、font_size 和文字 rotation。不要猜测 OCR 位置。
 
 ## 翻译文件
 
@@ -28,7 +32,11 @@
 | PDF_TRANSLATION_COVERAGE / PDF_EMPTY_TRANSLATION | 补齐缺少或空白 ID；保留数字、符号等有意义内容 |
 | PDF_VISUAL_REVIEW_REQUIRED | 渲染对应页并核对 OCR；之后才写入 review 状态 |
 | PDF_PROTECTED_TERM | 恢复相应块的精确术语写法 |
-| PDF_RENDERED_TEXT_MISSING | 检查目标语言字体、无法渲染字符、超长单词和布局；不得裁短译文 |
+| PDF_RENDERED_TEXT_MISSING | 检查目标语言字体、无法渲染字符和原框内布局；不得裁短译文 |
+| PDF_TEXT_DOES_NOT_FIT | 忠实精炼对应块后重试，保留全部事实、数字和术语；不得添加续页或扩大框 |
+| PDF_REGION_VERSION / PDF_REGION_MISSING | 重新抽取原文坐标；旧阅读稿 manifest 不适用于原位导出 |
+| PDF_REGION_BOUNDS / PDF_TEXT_ANGLE | 核对裁剪范围及文本角度；不能猜位置或扩展遮盖区 |
+| PDF_BACKGROUND_CHANGED / PDF_PAGE_GEOMETRY_CHANGED | 停止交付并修复坐标映射；不能放松区域外保真校验 |
 | PDF_ORIGINAL_RENDER_CHANGED | 保留原页失败；停止导出，检查源页注释、字体或引擎行为 |
 | PDF_SAVED_HASH | 保存后的文件与验证候选不一致；换输出位置重试 |
 
@@ -41,6 +49,6 @@ python -m pip install 'PyMuPDF>=1.26.6,<1.28'
 tesseract --list-langs
 ```
 
-使用操作系统的 Tesseract 安装和语言数据；只装英文数据不能用于完整中文识别。PyMuPDF 的分发与集成遵循其上游许可。字体由 MuPDF Story 选择与嵌入；未覆盖字符会被回读文字检查或最终视觉检查捕获。
+使用操作系统的 Tesseract 安装和语言数据；只装英文数据不能用于完整中文识别。PyMuPDF 的分发与集成遵循其上游许可。原位文字框由 MuPDF insert_htmlbox 自动缩放，字体由 MuPDF 选择与嵌入；未覆盖字符会被回读文字检查或最终视觉检查捕获。
 
 参考：[PyMuPDF Story](https://pymupdf.readthedocs.io/en/latest/story-class.html)、[Page OCR](https://pymupdf.readthedocs.io/en/latest/page.html#Page.get_textpage_ocr)。

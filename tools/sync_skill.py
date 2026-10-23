@@ -11,7 +11,7 @@ for name in ['pdf_translate.py', 'translation_batches.py']:
     shutil.copy2(root / 'tools' / name, skill / 'scripts' / name)
 workbench = skill / 'assets/workbench'
 workbench.mkdir(parents=True, exist_ok=True)
-for name in ['app.js', 'index.html', 'i18n.js', 'package.json', 'api', 'desktop', 'tests']:
+for name in ['app.js', 'pdf-overlay.js', 'index.html', 'i18n.js', 'package.json', 'api', 'desktop', 'tests']:
     source = root / name
     if source.is_dir():
         shutil.copytree(source, workbench / name, dirs_exist_ok=True,
@@ -26,6 +26,7 @@ for name in ['pdf_translate.py', 'translation_batches.py', 'requirements-pdf.txt
     'base_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
     'enhancements': ['PDF coverage gate', 'mixed-page OCR', 'bounded translation retries',
                      'parse-failure recovery', 'agent-native verified bilingual PDF workflow',
-                     '128K context/output budgeting', 'parallel agent jobs and resumable merge'],
+                     '128K context/output budgeting', 'parallel agent jobs and resumable merge',
+                     'fixed 2N in-place white/black PDF overlays', 'rotation and crop coordinate verification'],
 }, indent=2) + '\n', encoding='utf-8')
 print(skill)
