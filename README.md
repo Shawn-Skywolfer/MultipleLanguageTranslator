@@ -211,3 +211,20 @@ node skills/document-translate/scripts/start_workbench.cjs 8765
 维护者修改项目后运行 `python tools/sync_skill.py`，同步经过测试的工作台快照和 PDF 脚本；勿把 API Key、个人配置、输入或输出文档加入 Skill。执行 `npm test` 检查前端及现有 PPTX 行为；执行 `python tests/pdf-cli.test.py` 检查 PDF 原生链路（含真实 Tesseract 英文 OCR）。PyMuPDF 按其上游许可使用。
 
 检查证明的是文件能被所用引擎解析/渲染、抽取块被覆盖及原页视觉保留；OCR 完整性、翻译准确性、表格阅读关系仍需逐页审阅，不能据此宣称所有阅读器绝对无错误。
+
+### 128K 上下文与多 Agent 并行
+
+Skill 的原生 PDF 流程新增 `tools/translation_batches.py`：
+
+```bash
+python tools/translation_batches.py plan work/manifest.json --language English --context-tokens 128000 --max-output-tokens 8192 --agents 3 --work-dir work/batches
+python tools/translation_batches.py status work/batches/plan.json
+# 由宿主多 Agent 工具派发独立 request；各 worker 用 submit 提交独立候选。
+python tools/translation_batches.py merge work/batches/plan.json --output work/translations.json
+```
+
+默认上下文 128K、单次输出预算 8192、最多 3 个并行 Agent（可设 1–8，受宿主配额限制）。规划器同时预留系统、工具、安全和术语空间，并按译文膨胀限制批次；超长原块自动按 Unicode 安全边界分片。使用保守 UTF-8 字节估算，不能替代模型的实际分词器或改变宿主的上下文/输出设置。
+
+主 Agent 只读取调度摘要，worker 在新会话中读取各自批次、共享术语与少量相邻上下文。结果采用独立文件与原子排他提交；身份、语言、来源版本、覆盖、复核归属及分片顺序不一致会阻止合并。status 支持断点续做，完整批次不重跑。没有真实多 Agent 工具时按相同批次串行，不把脚本线程称为 Agent。
+
+详细调度与 worker 提示见 [并行翻译流程](skills/document-translate/references/parallel-translation.md)。此分片器用于原生 PDF；CSV/PPTX 沿用工作台，可按独立文件或语言分配独立实例。执行 `python tests/translation-batches.test.py` 测试预算、Unicode、并发提交、冲突拒绝、断点恢复和严格合并。
