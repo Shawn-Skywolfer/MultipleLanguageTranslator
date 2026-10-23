@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/Shawn-Skywolfer/MultipleLanguageTranslator",
+  "base_commit": "169ebe7855cbd31d8bfe0f06e5ac357bb906b942",
+  "enhancements": [
+    "PDF coverage gate",
+    "mixed-page OCR",
+    "bounded translation retries",
+    "parse-failure recovery",
+    "agent-native verified bilingual PDF workflow"
+  ]
+}
