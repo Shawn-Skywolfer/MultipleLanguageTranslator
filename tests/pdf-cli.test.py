@@ -68,6 +68,16 @@ class PdfCliTests(unittest.TestCase):
             source.write_bytes(source.read_bytes() + b'\n')
             self.call('validate', manifest, targets, ok=False)
 
+    def test_split_ocr_word_spans(self):
+        class Page:
+            number=0
+            def get_text(self,*args,**kwargs):
+                return {'blocks':[{'type':0,'lines':[{'dir':(1,0),'bbox':(0,0,165,20),'spans':[
+                    {'text':'Scanned','size':20,'bbox':(0,0,70,20)},
+                    {'text':'energy','size':20,'bbox':(76,0,136,20)},
+                    {'text':'report','size':20,'bbox':(142,0,202,20)}]}]}]}
+        self.assertEqual(mod.extract_regions(Page())[0]['source'],'Scanned energy report')
+
     def test_geometry_and_columns(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);source=root/'geometry.pdf';manifest=root/'manifest.json';targets=root/'translations.json'

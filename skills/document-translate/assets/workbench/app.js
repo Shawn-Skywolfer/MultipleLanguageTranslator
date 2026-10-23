@@ -1485,14 +1485,15 @@ function pdfNativeRegions(textContent, viewport) {
     const angle=(Math.atan2(t[1],t[0])*180/Math.PI+360)%360;
     const rotation=((Math.round(angle/90)*90)%360+360)%360;
     if(Math.abs((angle-rotation+180)%360-180)>1)throw new Error('PDF_TEXT_ANGLE：文字角度需要人工核对，不能猜测覆盖位置。');
-    return {text:item.str.trim(),fontSize:size,rotation,coordinateSpace:'display-top-left',bbox:{x0:Math.max(0,Math.min(...points.map(p=>p[0]))),y0:Math.max(0,Math.min(...points.map(p=>p[1]))),x1:Math.min(viewport.width,Math.max(...points.map(p=>p[0]))),y1:Math.min(viewport.height,Math.max(...points.map(p=>p[1])))}};
+    return {text:item.str.trim(),spaceBefore:/^\s/.test(item.str),spaceAfter:/\s$/.test(item.str),fontSize:size,rotation,coordinateSpace:'display-top-left',bbox:{x0:Math.max(0,Math.min(...points.map(p=>p[0]))),y0:Math.max(0,Math.min(...points.map(p=>p[1]))),x1:Math.min(viewport.width,Math.max(...points.map(p=>p[0]))),y1:Math.min(viewport.height,Math.max(...points.map(p=>p[1])))}};
   }).filter(t=>t.bbox.x1>t.bbox.x0&&t.bbox.y1>t.bbox.y0);
   tokens.sort((a,b)=>Math.abs(a.bbox.y0-b.bbox.y0)<2?a.bbox.x0-b.bbox.x0:a.bbox.y0-b.bbox.y0);
   const lines=[];
   for(const t of tokens) {
     const last=lines[lines.length-1];
     if(last&&last.rotation===t.rotation&&t.rotation===0&&Math.abs(last.bbox.y0-t.bbox.y0)<2&&Math.abs(last.fontSize-t.fontSize)<t.fontSize*.15&&t.bbox.x0-last.bbox.x1>=-1&&t.bbox.x0-last.bbox.x1<Math.max(3,t.fontSize*.6)) {
-      last.text+=' '+t.text;last.bbox.x1=Math.max(last.bbox.x1,t.bbox.x1);last.bbox.y1=Math.max(last.bbox.y1,t.bbox.y1);
+      const gap=t.bbox.x0-last.bbox.x1;
+      last.text+=(last.spaceAfter||t.spaceBefore||gap>t.fontSize*.12?' ':'')+t.text;last.spaceAfter=t.spaceAfter;last.bbox.x1=Math.max(last.bbox.x1,t.bbox.x1);last.bbox.y1=Math.max(last.bbox.y1,t.bbox.y1);
     } else lines.push(t);
   }
   return lines.map((line,index)=>({...line,id:`text-${index+1}`}));

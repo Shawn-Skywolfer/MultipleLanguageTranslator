@@ -24,6 +24,8 @@ const fs=require('node:fs');const app=fs.readFileSync('app.js','utf8');const vm=
 const start=app.indexOf('function pdfNativeRegions('),end=app.indexOf('async function extractPdfDocument(',start);
 const c={};vm.createContext(c);vm.runInContext(app.slice(start,end),c);
 const native=c.pdfNativeRegions({items:[{str:'Left',width:50,fontName:'a',transform:[12,0,0,12,50,700]},{str:'Right',width:60,fontName:'a',transform:[12,0,0,12,350,700]}],styles:{a:{ascent:.8,descent:-.2}}},{width:600,height:800,scale:1,transform:[1,0,0,-1,0,800]});
+const styled=c.pdfNativeRegions({items:[{str:'Grid',width:24,fontName:'a',transform:[12,0,0,12,50,700]},{str:'-forming',width:50,fontName:'a',transform:[12,0,0,12,74,700]}],styles:{}},{width:600,height:800,scale:1,transform:[1,0,0,-1,0,800]});
+assert.equal(styled[0].text,'Grid-forming','adjacent styled spans must not introduce a false word space');
 assert.equal(native.length,2,'two columns on the same line must stay separate');
 assert.equal(native[0].bbox.x0,50);assert(Math.abs(native[0].bbox.y0-90.4)<.01);
 console.log('PDF overlays passed: fixed rectangles, black-on-white fitting, expansion shrink, fail-closed overflow, two-column isolation and paired original-background HTML.');

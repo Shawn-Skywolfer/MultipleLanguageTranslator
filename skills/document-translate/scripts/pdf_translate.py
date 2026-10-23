@@ -67,7 +67,20 @@ def extract_regions(page, textpage=None):
         current = None
         for line in block.get('lines', []):
             spans = [span for span in line['spans'] if span.get('text', '').strip()]
-            text = ''.join(span['text'] for span in spans).strip()
+            direction = line.get('dir', (1, 0))
+            text, previous = '', None
+            def projected_bounds(box):
+                x0,y0,x1,y1 = box
+                values = [x*direction[0]+y*direction[1] for x,y in [(x0,y0),(x0,y1),(x1,y0),(x1,y1)]]
+                return min(values),max(values)
+            for span in spans:
+                if previous and text and not text[-1].isspace() and not span['text'][0].isspace():
+                    gap = projected_bounds(span['bbox'])[0] - projected_bounds(previous['bbox'])[1]
+                    if gap > min(span['size'],previous['size'])*.12:
+                        text += ' '
+                text += span['text']
+                previous = span
+            text = text.strip()
             if not text:
                 continue
             box = list(line['bbox'])

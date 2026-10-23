@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/Shawn-Skywolfer/MultipleLanguageTranslator",
-  "base_commit": "af79571f0b3ae50ca2836fd00d6b822ceb069d4c",
+  "base_commit": "8bfb1cd188cde0dbc5427ae4d6e1deb8c4076161",
   "enhancements": [
     "PDF coverage gate",
     "mixed-page OCR",
