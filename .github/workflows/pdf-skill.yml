@@ -1,0 +1,27 @@
+name: PDF and Skill verification
+on:
+  pull_request:
+    paths: ['app.js', 'tools/**', 'skills/**', 'tests/**', '.github/workflows/pdf-skill.yml']
+  push:
+    branches: [main]
+    paths: ['app.js', 'tools/**', 'skills/**', 'tests/**', '.github/workflows/pdf-skill.yml']
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-eng
+      - run: python -m pip install -r tools/requirements-pdf.txt
+      - run: npm test
+      - run: python tests/pdf-cli.test.py
+      - name: Check distributed source consistency
+        run: |
+          cmp app.js skills/document-translate/assets/workbench/app.js
+          cmp tools/pdf_translate.py skills/document-translate/scripts/pdf_translate.py

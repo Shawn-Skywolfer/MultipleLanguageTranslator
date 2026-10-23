@@ -5,9 +5,10 @@
   "description": "CSV, PDF and verified PowerPoint translation workbench",
   "main": "desktop/main.cjs",
   "scripts": {
-    "test": "node --check app.js && node tests/i18n.test.js && node tests/multimodal.test.js && node tests/pdf-compare.test.js && node tests/pptx-layout.test.js && node tests/settings-desktop.test.js",
+    "test": "node --check app.js && node tests/i18n.test.js && node tests/multimodal.test.js && node tests/pdf-compare.test.js && node tests/pptx-layout.test.js && node tests/settings-desktop.test.js && node tests/pdf-integrity.test.js",
     "desktop": "electron .",
-    "dist:win": "electron-builder --win portable --x64"
+    "dist:win": "electron-builder --win portable --x64",
+    "test:pdf-cli": "python tests/pdf-cli.test.py"
   },
   "devDependencies": {
     "electron": "42.2.0",
@@ -26,7 +27,9 @@
       "package.json"
     ],
     "win": {
-      "target": ["portable"],
+      "target": [
+        "portable"
+      ],
       "artifactName": "MultipleLanguageTranslator-Portable-${version}.exe"
     }
   }

@@ -324,6 +324,6 @@ assert.match(src, /rememberPptxAttempt\(profile, error\)/, 'generation failures 
 assert.match(src, /buildTranslatedPptxAttempt\(doc, lang, results, profile\)/, 'automatic retries must rebuild from the pristine source buffer');
 assert.match(src, /for \(const originalSlidePath of originalSlidePaths\)/, 'formatting rules must cover original and translated slides in the generated deck');
 assert.match(src, /for \(const originalDiagramPath of originalDiagramPaths\)/, '1x line spacing must cover original and translated SmartArt parts');
-assert.match(src, /PPTX 翻译自修复第 \$\{repairRound\}\/2 轮/, 'failed translation objects must receive bounded whole-task repair rounds');
+assert.match(src, /文档翻译自修复第 \$\{repairRound\}\/2 轮/, 'failed translation objects must receive bounded whole-task repair rounds');
 
 console.log('pptx checks passed: title wrapping, 1x line spacing, layout fidelity, OOXML order, CRC, and verified-save safeguards covered.');

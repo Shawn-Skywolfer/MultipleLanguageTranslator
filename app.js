@@ -1451,10 +1451,10 @@ function groupPdfTextItems(items) {
   });
   return blocks
     .map((block, index) => ({ id:`text-${index + 1}`, text:block.texts.join('\n').trim(), bbox:{ x0:block.x0, y0:block.y0, x1:block.x1, y1:block.y1 } }))
-    .filter(block => isLikelyText(block.text));
+    .filter(block => block.text.trim());
 }
 function splitOcrText(text) {
-  return String(text || '').split(/\n{2,}/).map(part => part.replace(/[ \t]+/g, ' ').replace(/\n/g, ' ').trim()).filter(isLikelyText);
+  return String(text || '').split(/\n{2,}/).map(part => part.replace(/[ \t]+/g, ' ').replace(/\n/g, ' ').trim()).filter(Boolean);
 }
 async function renderPdfPageToCanvas(page, scale) {
   const viewport = page.getViewport({ scale });
@@ -1471,39 +1471,73 @@ function getOcrLanguage(sourceLang) {
   return 'eng+chi_sim';
 }
 async function extractPdfDocument(file, sourceLang, options) {
+  if (!window.pdfjsLib) throw new Error('PDF 解析组件未加载，请检查网络后重试。');
   const captureImage = !!(options && options.captureImage);
   log('documentLog', `开始解析 PDF：${file.name}`);
   const pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
   const pages = [];
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale: 1 });
-    const textContent = await page.getTextContent();
-    let blocks = groupPdfTextItems(textContent.items || []);
-    let extraction = 'text';
-    let pageCanvas = null;
-    if (!blocks.length || blocks.map(item => item.text).join(' ').length < 24) {
-      extraction = 'ocr';
-      log('documentLog', `第 ${i} 页文本不足，开始 OCR...`);
-      pageCanvas = await renderPdfPageToCanvas(page, 2);
-      const result = await window.Tesseract.recognize(pageCanvas, getOcrLanguage(sourceLang), {
-        logger: msg => {
-          if (msg.status === 'recognizing text' && typeof msg.progress === 'number') {
-            $('documentProgressText').textContent = `OCR 第 ${i} 页：${Math.round(msg.progress * 100)}%`;
-          }
-        },
-      });
-      blocks = splitOcrText(result.data.text).map((text, index) => ({ id:`ocr-${index + 1}`, text }));
+  try {
+    for (let i = 1; i <= pdf.numPages; i++) {
+      if (state.cancel) throw new Error('PDF 解析已取消，未生成任何译文文件。');
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 1 });
+      const textContent = await page.getTextContent();
+      let blocks = groupPdfTextItems(textContent.items || []);
+      let extraction = 'text';
+      let pageCanvas = null;
+      const operators = await page.getOperatorList();
+      const imageOps = ['paintImageXObject','paintInlineImageXObject','paintImageMaskXObject','paintImageXObjectRepeat','paintImageMaskXObjectRepeat','paintInlineImageXObjectGroup','paintImageMaskXObjectGroup'].map(name => window.pdfjsLib.OPS[name]).filter(Number.isFinite);
+      const hasImages = operators.fnArray.some(op => imageOps.includes(op));
+      if (hasImages || !blocks.length || blocks.map(item => item.text).join(' ').length < 24) {
+        extraction = 'ocr';
+        log('documentLog', `第 ${i} 页含图片或文本不足，开始 OCR...`);
+        pageCanvas = await renderPdfPageToCanvas(page, 2);
+        if (!window.Tesseract) throw new Error(`PDF 第 ${i} 页需要 OCR，但 OCR 组件未加载。`);
+        const worker = await getPptxOcrWorker(sourceLang);
+        const result = await worker.recognize(pageCanvas, {}, { text:true, blocks:true });
+        const nativeText = blocks.map(block => block.text).join(' ').replace(/\s+/g, '').toLowerCase();
+        const ocrBlocks = String(result.data.text || '').split(/\n/).map(text => text.trim()).filter(Boolean)
+          .filter(text => !nativeText.includes(text.replace(/\s+/g, '').toLowerCase()))
+          .map((text, index) => ({ id:`ocr-${index + 1}`, text }));
+        // Keep a short native title if OCR cannot improve it. A truly blank page is safe;
+        // a nonblank page with no recognized text requires human review instead of silent loss.
+        if (ocrBlocks.length) blocks = blocks.concat(ocrBlocks);
+        if (!blocks.length && !isPdfCanvasBlank(pageCanvas)) {
+          throw new Error(`PDF_OCR_EMPTY：第 ${i} 页有可见内容，但未识别到文字。请确认是否为纯图表页，或修正 OCR 后重试。`);
+        }
+      }
+      let image = '';
+      if (captureImage) {
+        if (!pageCanvas) pageCanvas = await renderPdfPageToCanvas(page, 1.6);
+        image = pageCanvas.toDataURL('image/jpeg', 0.82);
+      }
+      pages.push({ pageNo:i, extraction, blocks, width:viewport.width, height:viewport.height, image });
+      page.cleanup();
     }
-    let image = '';
-    if (captureImage) {
-      if (!pageCanvas) pageCanvas = await renderPdfPageToCanvas(page, 1.6);
-      image = pageCanvas.toDataURL('image/jpeg', 0.82);
-    }
-    pages.push({ pageNo:i, extraction, blocks, width:viewport.width, height:viewport.height, image });
+    log('documentLog', `PDF 解析完成：${file.name}，共 ${pages.length} 页。`);
+    return { type:'pdf', name:file.name, pages };
+  } finally {
+    await pdf.destroy();
   }
-  log('documentLog', `PDF 解析完成：${file.name}，共 ${pages.length} 页。`);
-  return { type:'pdf', name:file.name, pages };
+}
+function isPdfCanvasBlank(canvas) {
+  const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] && Math.min(data[i], data[i + 1], data[i + 2]) < 245) return false;
+  }
+  return true;
+}
+function validatePdfResultCoverage(doc, results) {
+  const failures = [];
+  let expected = 0;
+  doc.pages.forEach(page => page.blocks.forEach((block, index) => {
+    expected++;
+    const id = `page-${page.pageNo}-block-${index + 1}`;
+    const item = results.get(id);
+    if (!item || item.error || !String(item.text || '').trim()) failures.push(id);
+  }));
+  if (failures.length) throw new Error(`PDF_TRANSLATION_INCOMPLETE：${failures.length}/${expected} 个文本块未成功翻译，停止导出。${failures.slice(0, 12).join('、')}`);
+  return { expected, pages:doc.pages.length };
 }
 function xmlFrom(text) {
   return new DOMParser().parseFromString(text, 'application/xml');
@@ -1851,14 +1885,14 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
   const concurrency = doc.type === 'pptx' && meta.translateImages ? 1 : meta.concurrency;
   if (concurrency !== meta.concurrency) log('documentLog', '已启用图片翻译：本次任务自动使用单并发，避免多模态模型过载。');
   await Promise.all(Array.from({length: concurrency}, () => worker()));
-  if (doc.type === 'pptx' && !state.cancel) {
+  if ((doc.type === 'pptx' || doc.type === 'pdf') && !state.cancel) {
     for (let repairRound = 1; repairRound <= 2; repairRound++) {
       const failedTasks = tasks.filter(task => {
         const item = results.get(task.id);
         return !item || item.error || (task.kind !== 'image' && !String(item.text || '').trim());
       });
       if (!failedTasks.length) break;
-      log('documentLog', `PPTX 翻译自修复第 ${repairRound}/2 轮：将 ${failedTasks.length} 个失败对象改为单并发、快速模式重新执行。`);
+      log('documentLog', `文档翻译自修复第 ${repairRound}/2 轮：将 ${failedTasks.length} 个失败对象改为单并发、快速模式重新执行。`);
       for (const task of failedTasks) {
         if (state.cancel) break;
         try {
@@ -1867,16 +1901,17 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
             results.set(task.id, { regions, text:'', warning:`第 ${repairRound} 轮自修复成功`, error:'' });
           } else {
             const repairMeta = { ...meta, workflowMode:'fast', retries:Math.max(2, meta.retries) };
-            const translated = await withRetry(() => translatePptxTask(task, targetLang, repairMeta, null), repairMeta.retries, 'documentLog');
+            const translated = await withRetry(() => doc.type === 'pptx' ? translatePptxTask(task, targetLang, repairMeta, null) : workflowTranslate(task.source, meta.sourceLang, targetLang, '', { protectedTerms:meta.protectedTerms, customRules:meta.customRules }, 'fast', 'documentLog'), repairMeta.retries, 'documentLog');
+            if (!String(translated || '').trim()) throw new Error('译文为空');
             const issues = validatePptxTranslationChecklist(task, translated);
             if (issues.length) throw new Error(`自修复译文质检仍未通过：${issues.join('；')}`);
             const missing = validateProtectedTerms(task.source, translated, meta.protectedTerms);
             results.set(task.id, { text:translated, warning:[`第 ${repairRound} 轮自修复成功`, missing.length ? '受保护术语缺失：' + missing.join(' / ') : ''].filter(Boolean).join('；'), error:'' });
           }
-          log('documentLog', `PPTX 翻译自修复成功：${task.id}`);
+          log('documentLog', `文档翻译自修复成功：${task.id}`);
         } catch (error) {
           results.set(task.id, { text:'', warning:'', error:error.message || String(error), errorCode:error.code || 'REPAIR_TRANSLATION_ERROR' });
-          log('documentLog', `PPTX 翻译自修复仍失败：${task.id}；${error.message || error}`);
+          log('documentLog', `文档翻译自修复仍失败：${task.id}；${error.message || error}`);
         }
       }
     }
@@ -2884,60 +2919,74 @@ async function runDocumentTranslate() {
     outputs: { markdown: $('docOutputMarkdown').checked, docx: $('docOutputDocx').checked, html: $('docOutputHtml').checked },
     translateImages: !!$('docTranslateImages')?.checked,
   };
-  const parsedDocuments = [];
-  let total = 0;
-  for (const item of state.documentFiles) {
-    const doc = /\.pdf$/i.test(item.name) ? await extractPdfDocument(item.file, meta.sourceLang, { captureImage: meta.outputs.html }) : await extractPptxDocument(item.file);
-    parsedDocuments.push({ item, doc });
-    total += collectDocumentTasks(doc).length * langs.length;
-  }
-  const counter = { done:0, total };
-  updateProgress(0, total);
-  for (const { item, doc } of parsedDocuments) {
-    if (state.cancel) break;
-    for (const lang of langs) {
+  try {
+    const parsedDocuments = [];
+    let total = 0;
+    for (const item of state.documentFiles) {
       if (state.cancel) break;
-      state.progressNote = `${item.name} → ${lang}`;
-      const pendingRow = addPendingRow('documentResultBody', 'documentTableWrap', 'documentEmpty',
-        `<td data-label="文件">${escapeHtml(item.name)}</td><td data-label="语言">${escapeHtml(lang)}</td><td data-label="类型">-</td><td data-label="状态"><span class="status pending">进行中</span></td><td data-label="说明">正在翻译…</td><td data-label="下载">-</td>`);
       try {
-        log('documentLog', `翻译 ${item.name} -> ${lang}`);
-        const results = await translateDocumentToLanguage(doc, lang, meta, counter);
-        if (doc.type === 'pdf') {
-          if (meta.outputs.markdown) {
-            const md = buildPdfMarkdown(doc, lang, results);
-            renderDocumentResult({ name:item.name, lang, kind:'Markdown', status:'ok', message:`${doc.pages.length} 页双语 Markdown`, blob:new Blob([md], { type:'text/markdown;charset=utf-8' }), downloadName:`${fileStem(item.name)}_${lang}.md` });
-          }
-          if (meta.outputs.docx) {
-            const blob = await buildPdfDocx(doc, lang, results);
-            renderDocumentResult({ name:item.name, lang, kind:'DOCX', status:'ok', message:`${doc.pages.length} 页双语 DOCX`, blob, downloadName:`${fileStem(item.name)}_${lang}.docx` });
-          }
-          if (meta.outputs.html) {
-            const html = buildPdfComparisonHtml(doc, lang, results);
-            renderDocumentResult({ name:item.name, lang, kind:'图文对照 HTML', status:'ok', message:`${doc.pages.length} 页原文截图 + 译文对照`, blob:new Blob([html], { type:'text/html;charset=utf-8' }), downloadName:`${fileStem(item.name)}_${lang}_compare.html` });
-          }
-        } else {
-          const coverage = validatePptxResultCoverage(doc, results, meta.translateImages);
-          const blob = await buildTranslatedPptx(doc, lang, results);
-          renderDocumentResult({ name:item.name, lang, kind:'PPTX 翻译版', status:'ok', message:`通过完整性、CRC 与包结构校验：${coverage.expected} 个对象；原稿 ${doc.slides.length} 页，输出 ${doc.slides.length * 2} 页。Chrome/Edge 下载后会自动重读并校验落盘文件。`, blob, downloadName:`${fileStem(item.name)}_${lang}_translated.pptx`, expectedSlides:doc.slides.length * 2 });
-        }
+        const doc = /\.pdf$/i.test(item.name) ? await extractPdfDocument(item.file, meta.sourceLang, { captureImage: meta.outputs.html }) : await extractPptxDocument(item.file);
+        parsedDocuments.push({ item, doc });
+        total += collectDocumentTasks(doc).length * langs.length;
       } catch (error) {
-        state.errors++;
-        stat();
-        renderDocumentResult({ name:item.name, lang, kind:doc.type === 'pdf' ? '文档' : 'PPTX 审校版', status:'fail', message:error.message || String(error), blob:null, downloadName:'' });
-        log('documentLog', `失败：${item.name} -> ${lang}；${error.message || error}`);
-      } finally {
-        pendingRow.remove();
+        if (!state.cancel) {
+          state.errors++; stat();
+          renderDocumentResult({ name:item.name, lang:'-', kind:'解析', status:'fail', message:error.message || String(error), blob:null, downloadName:'' });
+          log('documentLog', `解析失败：${item.name}；${error.message || error}`);
+        }
       }
     }
+    const counter = { done:0, total };
+    updateProgress(0, total);
+    for (const { item, doc } of parsedDocuments) {
+      if (state.cancel) break;
+      for (const lang of langs) {
+        if (state.cancel) break;
+        state.progressNote = `${item.name} → ${lang}`;
+        const pendingRow = addPendingRow('documentResultBody', 'documentTableWrap', 'documentEmpty',
+          `<td data-label="文件">${escapeHtml(item.name)}</td><td data-label="语言">${escapeHtml(lang)}</td><td data-label="类型">-</td><td data-label="状态"><span class="status pending">进行中</span></td><td data-label="说明">正在翻译…</td><td data-label="下载">-</td>`);
+        try {
+          log('documentLog', `翻译 ${item.name} -> ${lang}`);
+          const results = await translateDocumentToLanguage(doc, lang, meta, counter);
+          if (state.cancel) throw new Error('翻译已取消，未导出不完整结果。');
+          if (doc.type === 'pdf') {
+            validatePdfResultCoverage(doc, results);
+            if (meta.outputs.markdown) {
+              const md = buildPdfMarkdown(doc, lang, results);
+              renderDocumentResult({ name:item.name, lang, kind:'Markdown', status:'ok', message:`${doc.pages.length} 页双语 Markdown`, blob:new Blob([md], { type:'text/markdown;charset=utf-8' }), downloadName:`${fileStem(item.name)}_${lang}.md` });
+            }
+            if (meta.outputs.docx) {
+              const blob = await buildPdfDocx(doc, lang, results);
+              renderDocumentResult({ name:item.name, lang, kind:'DOCX', status:'ok', message:`${doc.pages.length} 页双语 DOCX`, blob, downloadName:`${fileStem(item.name)}_${lang}.docx` });
+            }
+            if (meta.outputs.html) {
+              const html = buildPdfComparisonHtml(doc, lang, results);
+              renderDocumentResult({ name:item.name, lang, kind:'图文对照 HTML', status:'ok', message:`${doc.pages.length} 页原文截图 + 译文对照`, blob:new Blob([html], { type:'text/html;charset=utf-8' }), downloadName:`${fileStem(item.name)}_${lang}_compare.html` });
+            }
+          } else {
+            const coverage = validatePptxResultCoverage(doc, results, meta.translateImages);
+            const blob = await buildTranslatedPptx(doc, lang, results);
+            renderDocumentResult({ name:item.name, lang, kind:'PPTX 翻译版', status:'ok', message:`通过完整性、CRC 与包结构校验：${coverage.expected} 个对象；原稿 ${doc.slides.length} 页，输出 ${doc.slides.length * 2} 页。Chrome/Edge 下载后会自动重读并校验落盘文件。`, blob, downloadName:`${fileStem(item.name)}_${lang}_translated.pptx`, expectedSlides:doc.slides.length * 2 });
+          }
+        } catch (error) {
+          state.errors++;
+          stat();
+          renderDocumentResult({ name:item.name, lang, kind:doc.type === 'pdf' ? '文档' : 'PPTX 审校版', status:'fail', message:error.message || String(error), blob:null, downloadName:'' });
+          log('documentLog', `失败：${item.name} -> ${lang}；${error.message || error}`);
+        } finally {
+          pendingRow.remove();
+        }
+      }
+    }
+  } finally {
+    state.progressNote = '';
+    await closePptxOcrWorker();
+    state.running = false;
+    $('runDocumentBtn').disabled = false;
+    $('cancelDocumentBtn').disabled = true;
+    const misses = Object.entries(state.translationMemoryStats.missesByLang).map(([lang, count]) => `${lang} ${count}`).join('；') || '无';
+    log('documentLog', (state.cancel ? '已停止。' : '文档翻译结束。') + ` 标准库累计命中 ${state.translationMemoryStats.hits || 0}；未命中语言：${misses}。`);
   }
-  state.progressNote = '';
-  await closePptxOcrWorker();
-  state.running = false;
-  $('runDocumentBtn').disabled = false;
-  $('cancelDocumentBtn').disabled = true;
-  const misses = Object.entries(state.translationMemoryStats.missesByLang).map(([lang, count]) => `${lang} ${count}`).join('；') || '无';
-  log('documentLog', (state.cancel ? '已停止。' : '文档翻译结束。') + ` 标准库累计命中 ${state.translationMemoryStats.hits || 0}；未命中语言：${misses}。`);
 }
 function setupDrop(id, callback, inputId) {
   const dz = $(id);

@@ -171,3 +171,43 @@ Vercel 会自动：
 - 更精细的 PPTX 样式保留
 - 文档任务缓存与断点续跑
 - 可视化块级翻译预览
+
+## Agent Skill 与强化 PDF 流程
+
+本项目的可安装 Skill 位于 [`skills/document-translate`](skills/document-translate)。将整个目录复制到支持 Agent Skills 的客户端的 skills 目录，通过 `$document-translate` 调用。Skill 捆绑项目工作台源码，可运行现有 CSV/PPTX/PDF 功能；不要求每次从 GitHub 克隆。
+
+PDF 增强包括：
+
+- 浏览器工作台对混排页中的图片执行本地 OCR；保留原生文字及数字标签，复用 OCR Worker。
+- PDF 翻译失败块有两轮有限补译；缺少、空白或错误结果阻止全部 PDF 格式导出。
+- OCR 识别为空而页面非空时停止；解析失败逐文件报告，资源释放后恢复按钮，取消不输出半成品。
+- 新增无模型 API 依赖的 Agent 原生 PDF CLI：当前 Agent 按文本块翻译，脚本负责源文件 SHA-256 绑定、术语检查、覆盖检查与输出。
+- CLI 支持文字 PDF、扫描页和混排页；生成“原页＋对应译文页”双语 PDF、Markdown、原页截图/译文对照 HTML 及 JSON 验证报告。译文可自动续页，不挤回原版面。
+- PDF 在临时目录生成后重新打开，校验每个译文块可提取、渲染所有输出页、逐原页比对渲染像素，再发布结果。扫描/混排页必须有视觉复核记录。
+
+### PDF CLI
+
+需要 Python 3.10+ 和 `tools/requirements-pdf.txt` 中的依赖。扫描页还需 Tesseract 及源语言数据；中文使用 `chi_sim+eng`，不是仅安装 `eng`。
+
+```bash
+python -m pip install -r tools/requirements-pdf.txt
+python tools/pdf_translate.py extract report.pdf --manifest work/manifest.json --ocr auto --ocr-language chi_sim+eng
+# Agent 按 manifest 稳定 ID 翻译，写出 work/translations.json，并视觉核对 OCR 页。
+python tools/pdf_translate.py validate work/manifest.json work/translations.json
+python tools/pdf_translate.py export work/manifest.json work/translations.json --output-dir output
+```
+
+翻译 JSON、页复核格式和故障处理见 [Skill PDF 流程](skills/document-translate/references/pdf-workflow.md)。浏览器工作台继续提供 Markdown / DOCX / HTML；上述双语 PDF 文件输出由原生 CLI 提供。PDF 不是原位重排，不能转化为可编辑 PPTX。
+
+### 本地工作台与维护
+
+```bash
+node skills/document-translate/scripts/start_workbench.cjs 8765
+# 打开 http://127.0.0.1:8765
+```
+
+该服务只监听本机并拒绝跨来源请求，沿用原模型代理。工作台 CDN、OCR 语言数据与模型调用仍需对应网络连接；Agent 原生 PDF 翻译不需要另配 API Key。Windows 的 PowerPoint 真实打开门禁保持不变。
+
+维护者修改项目后运行 `python tools/sync_skill.py`，同步经过测试的工作台快照和 PDF 脚本；勿把 API Key、个人配置、输入或输出文档加入 Skill。执行 `npm test` 检查前端及现有 PPTX 行为；执行 `python tests/pdf-cli.test.py` 检查 PDF 原生链路（含真实 Tesseract 英文 OCR）。PyMuPDF 按其上游许可使用。
+
+检查证明的是文件能被所用引擎解析/渲染、抽取块被覆盖及原页视觉保留；OCR 完整性、翻译准确性、表格阅读关系仍需逐页审阅，不能据此宣称所有阅读器绝对无错误。
