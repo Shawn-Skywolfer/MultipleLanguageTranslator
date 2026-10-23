@@ -44,32 +44,4 @@ const style = pdfBlockRectStyle(blocks[0], { width: 600, height: 800 });
 assert.equal(style, 'left:12.00%;top:11.00%;width:23.00%;height:3.50%');
 assert.equal(pdfBlockRectStyle({ text: 'no bbox' }, { width: 600, height: 800 }), '', '无坐标的块（OCR）不输出定位');
 
-// 3. 对照 HTML 结构
-const doc = {
-  type: 'pdf',
-  name: 'report.pdf',
-  pages: [
-    { pageNo: 1, extraction: 'text', width: 600, height: 800, image: 'data:image/jpeg;base64,AAAA', blocks },
-    { pageNo: 2, extraction: 'ocr', width: 600, height: 800, image: 'data:image/jpeg;base64,BBBB', blocks: [{ id: 'ocr-1', text: '扫描页文字' }] },
-    { pageNo: 3, extraction: 'text', width: 600, height: 800, image: '', blocks: [] },
-  ],
-};
-const results = new Map([
-  ['page-1-block-1', { text: 'Der Umsatz stieg im dritten Quartal 2026 stark an.', warning: '', error: '' }],
-  ['page-1-block-2', { text: '', warning: '', error: 'HTTP 500' }],
-  ['page-2-block-1', { text: 'Gescannter Seitentext', warning: '受保护术语缺失：Q3', error: '' }],
-]);
-const html = buildPdfComparisonHtml(doc, 'German', results);
-assert.ok(html.startsWith('<!DOCTYPE html>'));
-assert.ok(html.includes('data:image/jpeg;base64,AAAA'), '页面截图内嵌');
-assert.ok(html.includes('id="hl-p1-b0"') && html.includes('left:12.00%;top:11.00%'), '文本块高亮区域带百分比定位');
-assert.ok(html.includes('data-hl="hl-p1-b0"'), '译文块与高亮区域联动');
-assert.ok(html.includes('Der Umsatz stieg im dritten Quartal 2026 stark an.'), '译文呈现');
-assert.ok(html.includes('Revenue grew strongly'), '原文可展开查看');
-assert.ok(html.includes('[ERROR] HTTP 500'), '失败块显示错误');
-assert.ok(html.includes('OCR 页'), 'OCR 页有标记');
-assert.ok(!html.includes('id="hl-p2-b0"'), 'OCR 块无坐标时不渲染高亮区域');
-assert.ok(html.includes('受保护术语缺失：Q3'), '术语警告呈现');
-assert.ok(html.includes('本页未生成原文截图。') && html.includes('本页未识别到可翻译文本。'), '空页与无截图占位');
-
-console.log('pdf comparison checks passed: block bboxes, percent positioning and side-by-side HTML structure verified.');
+console.log('pdf coordinate checks passed: legacy bboxes and top-left percentage positioning verified.');

@@ -1,0 +1,31 @@
+'use strict';
+const assert=require('node:assert/strict');
+const overlay=require('../pdf-overlay.js');
+function mockCanvas(w,h){
+ const ctx={font:'12px Arial',measureText(text){const size=Number.parseFloat(this.font);return {width:Array.from(text).length*size*.55,actualBoundingBoxAscent:size*.8,actualBoundingBoxDescent:size*.2};},fillRect(){},scale(){},translate(){},rotate(){},fillText(){}};
+ return {width:w,height:h,getContext:()=>ctx,toDataURL:()=> 'data:image/png;base64,WHITEBLACK'};
+}
+const block={id:'text-1',fontSize:12,bbox:{x0:50,y0:70,x1:250,y1:90},coordinateSpace:'display-top-left'};
+const page={pageNo:1,width:600,height:800,image:'data:image/jpeg;base64,ORIGINAL',blocks:[block]};
+assert.deepEqual(overlay.rect(block,page),{left:50,top:70,width:200,height:20});
+const short=overlay.paint(block,page,'Short translation',{createCanvas:mockCanvas});
+const expanded=overlay.paint(block,page,'A substantially longer translated sentence that must fit in its original region.',{createCanvas:mockCanvas});
+assert(expanded.fontSize<short.fontSize);assert(expanded.fontSize>=3.5);
+assert.throws(()=>overlay.paint(block,page,'huge '.repeat(10000),{createCanvas:mockCanvas}),/PDF_TEXT_DOES_NOT_FIT/);
+assert.throws(()=>overlay.rect({id:'bad'},page),/PDF_REGION_MISSING/);
+assert.throws(()=>overlay.rect({...block,bbox:{x0:-50,y0:0,x1:1,y1:1}},page),/PDF_REGION_BOUNDS/);
+const results=new Map([['page-1-block-1',{text:'Translation <safe>'}]]);
+const html=overlay.comparisonHtml({name:'report.pdf',pages:[page]},'English',results,{createCanvas:mockCanvas});
+assert(html.includes('class="overlay"'));assert(html.includes('left:8.333333333333332%'));
+assert(html.includes('Translation &lt;safe&gt;'));assert.equal((html.match(/base64,ORIGINAL/g)||[]).length,2,'both panes retain the source background');
+assert.throws(()=>overlay.comparisonHtml({pages:[page]},'English',new Map(),{createCanvas:mockCanvas}),/PDF_TRANSLATION_INCOMPLETE/);
+assert.throws(()=>overlay.paint({...block,rotation:45},page,'text',{createCanvas:mockCanvas}),/PDF_TEXT_ANGLE/);
+const fs=require('node:fs');const app=fs.readFileSync('app.js','utf8');const vm=require('node:vm');
+const start=app.indexOf('function pdfNativeRegions('),end=app.indexOf('async function extractPdfDocument(',start);
+const c={};vm.createContext(c);vm.runInContext(app.slice(start,end),c);
+const native=c.pdfNativeRegions({items:[{str:'Left',width:50,fontName:'a',transform:[12,0,0,12,50,700]},{str:'Right',width:60,fontName:'a',transform:[12,0,0,12,350,700]}],styles:{a:{ascent:.8,descent:-.2}}},{width:600,height:800,scale:1,transform:[1,0,0,-1,0,800]});
+const styled=c.pdfNativeRegions({items:[{str:'Grid',width:24,fontName:'a',transform:[12,0,0,12,50,700]},{str:'-forming',width:50,fontName:'a',transform:[12,0,0,12,74,700]}],styles:{}},{width:600,height:800,scale:1,transform:[1,0,0,-1,0,800]});
+assert.equal(styled[0].text,'Grid-forming','adjacent styled spans must not introduce a false word space');
+assert.equal(native.length,2,'two columns on the same line must stay separate');
+assert.equal(native[0].bbox.x0,50);assert(Math.abs(native[0].bbox.y0-90.4)<.01);
+console.log('PDF overlays passed: fixed rectangles, black-on-white fitting, expansion shrink, fail-closed overflow, two-column isolation and paired original-background HTML.');

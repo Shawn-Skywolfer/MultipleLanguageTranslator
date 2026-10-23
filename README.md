@@ -52,7 +52,7 @@
 - 输出：
   - 双语 `Markdown`
   - 双语 `DOCX`
-  - 图文对照 `HTML`：左侧为原文页面高清截图（图表、版面 100% 原貌），右侧为按阅读顺序排列的译文块；点击译文块可在左侧页面上高亮对应原文位置，译文块内可展开查看原文。适合快速阅读带大量图表的资料型 PDF（如分析师报告）
+  - 图文对照 `HTML`：左侧为原文页面高清截图（图表、版面 100% 原貌），右侧保留同一原始背景，并在各原文坐标内以白底黑字覆盖译文，按原文区域自动缩小字体。适合快速阅读带大量图表的资料型 PDF（如分析师报告）
 - 每个目标语言单独导出一个文件
 
 ### 第二阶段
@@ -182,7 +182,7 @@ PDF 增强包括：
 - PDF 翻译失败块有两轮有限补译；缺少、空白或错误结果阻止全部 PDF 格式导出。
 - OCR 识别为空而页面非空时停止；解析失败逐文件报告，资源释放后恢复按钮，取消不输出半成品。
 - 新增无模型 API 依赖的 Agent 原生 PDF CLI：当前 Agent 按文本块翻译，脚本负责源文件 SHA-256 绑定、术语检查、覆盖检查与输出。
-- CLI 支持文字 PDF、扫描页和混排页；生成“原页＋对应译文页”双语 PDF、Markdown、原页截图/译文对照 HTML 及 JSON 验证报告。译文可自动续页，不挤回原版面。
+- CLI 支持文字 PDF、扫描页和混排页；生成“原页＋对应译文页”双语 PDF、Markdown、原页截图/译文对照 HTML 及 JSON 验证报告。固定为原稿两倍页数，译文在原始坐标以白底黑字覆盖，字号自适应缩小；放不下时报具体区域，不续页、不裁切。
 - PDF 在临时目录生成后重新打开，校验每个译文块可提取、渲染所有输出页、逐原页比对渲染像素，再发布结果。扫描/混排页必须有视觉复核记录。
 
 ### PDF CLI
@@ -197,7 +197,7 @@ python tools/pdf_translate.py validate work/manifest.json work/translations.json
 python tools/pdf_translate.py export work/manifest.json work/translations.json --output-dir output
 ```
 
-翻译 JSON、页复核格式和故障处理见 [Skill PDF 流程](skills/document-translate/references/pdf-workflow.md)。浏览器工作台继续提供 Markdown / DOCX / HTML；上述双语 PDF 文件输出由原生 CLI 提供。PDF 不是原位重排，不能转化为可编辑 PPTX。
+翻译 JSON、页复核格式和故障处理见 [Skill PDF 流程](skills/document-translate/references/pdf-workflow.md)。浏览器工作台新增默认勾选的原位对照 PDF，也提供原位覆盖 HTML 和文字审阅用 Markdown / DOCX。Skill 使用原生 CLI 生成具有可提取译文文本的原位 PDF；浏览器用高分辨率字图覆盖，复用系统中文字体，避免依赖外部 CJK 字体下载。两种路径均复制原 PDF 页面并严格保持 2N 页。
 
 ### 本地工作台与维护
 
@@ -211,3 +211,28 @@ node skills/document-translate/scripts/start_workbench.cjs 8765
 维护者修改项目后运行 `python tools/sync_skill.py`，同步经过测试的工作台快照和 PDF 脚本；勿把 API Key、个人配置、输入或输出文档加入 Skill。执行 `npm test` 检查前端及现有 PPTX 行为；执行 `python tests/pdf-cli.test.py` 检查 PDF 原生链路（含真实 Tesseract 英文 OCR）。PyMuPDF 按其上游许可使用。
 
 检查证明的是文件能被所用引擎解析/渲染、抽取块被覆盖及原页视觉保留；OCR 完整性、翻译准确性、表格阅读关系仍需逐页审阅，不能据此宣称所有阅读器绝对无错误。
+
+### 128K 上下文与多 Agent 并行
+
+Skill 的原生 PDF 流程新增 `tools/translation_batches.py`：
+
+```bash
+python tools/translation_batches.py plan work/manifest.json --language English --context-tokens 128000 --max-output-tokens 8192 --agents 3 --work-dir work/batches
+python tools/translation_batches.py status work/batches/plan.json
+# 由宿主多 Agent 工具派发独立 request；各 worker 用 submit 提交独立候选。
+python tools/translation_batches.py merge work/batches/plan.json --output work/translations.json
+```
+
+默认上下文 128K、单次输出预算 8192、最多 3 个并行 Agent（可设 1–8，受宿主配额限制）。规划器同时预留系统、工具、安全和术语空间，并按译文膨胀限制批次；超长原块自动按 Unicode 安全边界分片。使用保守 UTF-8 字节估算，不能替代模型的实际分词器或改变宿主的上下文/输出设置。
+
+主 Agent 只读取调度摘要，worker 在新会话中读取各自批次、共享术语与少量相邻上下文。结果采用独立文件与原子排他提交；身份、语言、来源版本、覆盖、复核归属及分片顺序不一致会阻止合并。status 支持断点续做，完整批次不重跑。没有真实多 Agent 工具时按相同批次串行，不把脚本线程称为 Agent。
+
+详细调度与 worker 提示见 [并行翻译流程](skills/document-translate/references/parallel-translation.md)。此分片器用于原生 PDF；CSV/PPTX 沿用工作台，可按独立文件或语言分配独立实例。执行 `python tests/translation-batches.test.py` 测试预算、Unicode、并发提交、冲突拒绝、断点恢复和严格合并。
+
+### 原位覆盖 PDF 导出
+
+原稿 N 页固定输出 2N 页，按原页、对应译文页交替。译文页保留原始 PDF 背景，在准确文字框内添加不透明白底及黑色译文，字号从源字号自适应缩小，不扩大框或增加续页。单个框在最小字号仍放不下时拒绝导出并报告位置，不能截断、删减事实或改用阅读稿排版。
+
+原生 CLI 回读验证独立译文层、逐块文本、页数、旋转、裁剪和原页像素，并检查译文区域以外的像素未改变。浏览器通过 PDF.js 提取显示坐标和有坐标的 OCR 行；使用 viewport 逆变换处理旋转/CropBox，通过 pdf-lib 复制原页并添加自适应字图覆盖，导出后再用 PDF.js 渲染比对。图文对照 HTML 采用相同坐标和白底黑字覆盖。
+
+旧 manifest 必须重新 extract；旧批次也需重新规划。128K、多 Agent 调度和断点恢复仍保留，分片在合并后回到原文字框。`tests/pdf-browser.test.py` 用真实 PDF.js、pdf-lib、Canvas 运行浏览器导出核心，再由 PyMuPDF 独立检查 0/90/180/270 度、裁剪、多页及区域外保真；没有把它描述为完整浏览器 UI 或本机 Acrobat 测试。

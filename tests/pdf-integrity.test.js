@@ -41,15 +41,16 @@ vm.runInContext(slice('async function translateDocumentToLanguage(', 'function v
   let destroyed=false;
   context.state.cancel=true;
   context.window.pdfjsLib={getDocument:()=>({promise:Promise.resolve({numPages:1,destroy:async()=>{destroyed=true;}})})};
-  vm.runInContext(slice('async function extractPdfDocument(', 'function isPdfCanvasBlank('),context);
+  vm.runInContext(slice('function pdfNativeRegions(', 'function isPdfCanvasBlank('),context);
   await assert.rejects(context.extractPdfDocument({name:'test.pdf',arrayBuffer:async()=>new ArrayBuffer(0)},'English'),/取消/);
   assert.equal(destroyed,true);
 
   // Exercise mixed-page detection and merge: retain native text and numeric labels.
   destroyed=false;context.state.cancel=false;
   context.groupPdfTextItems=()=>[{id:'text-1',text:'Native title'},{id:'text-2',text:'99.99%'}];
-  context.getPptxOcrWorker=async()=>({recognize:async()=>({data:{text:'Native title\n99.99%\nImage caption'}})});
-  context.renderPdfPageToCanvas=async()=>({});context.window.Tesseract={};
+  context.collectNestedOcrLines=data=>data.lines;context.ocrBBox=line=>line.bbox;
+  context.getPptxOcrWorker=async()=>({recognize:async()=>({data:{text:'Native title\n99.99%\nImage caption',lines:[{text:'Native title',bbox:{x0:10,y0:10,x1:110,y1:30}},{text:'99.99%',bbox:{x0:10,y0:40,x1:80,y1:60}},{text:'Image caption',bbox:{x0:10,y0:70,x1:110,y1:90}}]}})});
+  context.renderPdfPageToCanvas=async()=>({width:600,height:800});context.window.Tesseract={};
   context.window.pdfjsLib={OPS:{paintImageXObject:85},getDocument:()=>({promise:Promise.resolve({numPages:1,
     getPage:async()=>({getViewport:()=>({width:600,height:800}),getTextContent:async()=>({items:[]}),getOperatorList:async()=>({fnArray:[85]}),cleanup(){}}),
     destroy:async()=>{destroyed=true;}})})};
