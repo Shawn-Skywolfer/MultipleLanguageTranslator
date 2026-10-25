@@ -22,7 +22,7 @@ class BatchesTests(unittest.TestCase):
 
     def fixture(self, root, text='Digital Power PCS. ' * 600):
         source=root/'source.pdf'; source.write_bytes(b'immutable source fixture')
-        manifest=dict(schema='document-translate/pdf-v1', source=str(source), sha256=mod.sha(source), page_count=3,
+        manifest=dict(schema='document-translate/pdfmath-v1', source=str(source), sha256=mod.sha(source), page_count=3,
                       pages=[dict(page=1,review_required=False,blocks=[dict(id='p1-b1',source=text)]),
                              dict(page=2,review_required=True,blocks=[dict(id='p2-b1',source='Scan content.')]),
                              dict(page=3,review_required=True,blocks=[])])
@@ -69,6 +69,26 @@ class BatchesTests(unittest.TestCase):
             Path(job['result']).unlink();status=json.loads(self.call('status',plan).stdout)
             self.assertEqual(sum(j['status']=='pending' for j in status['jobs']),1)
             self.call('merge',plan,'--output',root/'incomplete.json',ok=False)
+
+    def test_depth_identity_and_review_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);manifest,_,_=self.fixture(root,text='Source {v0} PCS.')
+            for depth,checks in [('direct',[]),('reviewed',['accuracy']),('multi-pass',['accuracy','terminology','final'])]:
+                directory=root/depth
+                self.call('plan',manifest,'--work-dir',directory,'--depth',depth)
+                plan=directory/'plan.json';p=mod.load(plan)
+                self.assertEqual(p['identity']['depth'],depth)
+                for job in p['jobs']:
+                    data=self.candidate(p,job);data['quality_checks']=checks
+                    req=mod.load(job['request']);self.assertEqual(req['depth'],depth)
+                    if checks:
+                        path=root/'missing-review.json';bad=dict(data,quality_checks=[]);mod.write_json(path,bad)
+                        self.call('submit',plan,'--batch',job['id'],'--candidate',path,ok=False)
+                    path=root/'depth-candidate.json';mod.write_json(path,data)
+                    self.call('submit',plan,'--batch',job['id'],'--candidate',path)
+                output=root/(depth+'.json');self.call('merge',plan,'--output',output)
+                self.assertEqual(mod.load(output)['depth'],depth)
+                self.assertTrue(all(v==checks for v in mod.load(output)['quality_checks'].values()))
 
     def test_stale_and_invalid_results(self):
         with tempfile.TemporaryDirectory() as tmp:

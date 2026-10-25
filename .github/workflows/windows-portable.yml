@@ -7,7 +7,8 @@ on:
       - 'desktop/**'
       - 'api/**'
       - 'app.js'
-      - 'pdf-overlay.js'
+      - 'tools/**'
+      - 'third_party/**'
       - 'index.html'
       - 'i18n.js'
       - 'package.json'
@@ -19,12 +20,24 @@ on:
 jobs:
   build-windows-portable:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Bundle standalone Python and PDFMathTranslate
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .pdf-runtime | Out-Null
+          Invoke-WebRequest https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip -OutFile "$env:RUNNER_TEMP/python.zip"
+          Expand-Archive "$env:RUNNER_TEMP/python.zip" .pdf-runtime
+          python -m pip install --target .pdf-runtime/site-packages -r tools/requirements-pdf.txt
+          @("python312.zip", ".", "site-packages", "../tools", "import site") | Set-Content -Encoding ascii .pdf-runtime/python312._pth
+          & .pdf-runtime/python.exe -c "import sys; sys.path.insert(0,'tools'); from pdf_translate import engine; engine(); import cv2, onnxruntime; print('Bundled PDF engine ready')"
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: Run tests

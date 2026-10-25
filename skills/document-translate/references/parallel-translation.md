@@ -8,6 +8,10 @@
 
 默认最多 3 个翻译 Agent；尊重实际并发/速率配额。429 时降为 1–2 个并发，指数退避，只重跑失败批次。只有 1 个批次时无需启动多个空闲 Agent。不要承诺固定加速倍数。
 
+## 深度
+
+默认 direct，翻译一次且不额外做全文语言审校；reviewed 需要准确性对照与修订；multi-pass 需要准确性、术语一致性与最终对照三轮修订。每批内部完成所选轮次，不把所有批次文本集中到主 Agent。quality_checks 分别为 []、["accuracy"]、["accuracy","terminology","final"]；只有实际执行后才能记录。数字/公式/覆盖检查每种深度都保留。改变深度重新建计划，不能复用旧计划冒充更深校验。
+
 ## 创建计划
 
 先确定术语，并在任务目录写 rules.json（可选）：
@@ -21,8 +25,8 @@
 ```
 
 ```bash
-python "$SKILL_ROOT/scripts/translation_batches.py" plan work/manifest.json --language English --rules work/rules.json --work-dir work/batches --context-tokens 128000 --max-output-tokens 8192 --agents 3
-python "$SKILL_ROOT/scripts/translation_batches.py" status work/batches/plan.json
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/translation_batches.py" plan work/manifest.json --language English --rules work/rules.json --work-dir work/batches --context-tokens 128000 --max-output-tokens 8192 --agents 3 --depth direct
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/translation_batches.py" status work/batches/plan.json
 ```
 
 `plan.json` 是调度索引，不含全文原文。`requests/batch-XXXX.json` 包含该批分片、统一术语、少量只读邻接上下文和分配的复核页。`results/` 只保存验证后结果。多个语言使用不同 work-dir；不要复用一个目录。
@@ -39,7 +43,7 @@ python "$SKILL_ROOT/scripts/translation_batches.py" status work/batches/plan.jso
 
 ## Worker 提示模板
 
-> 使用 `$document-translate`。仅完成 `<batch-id>`。读取 `<request-path>`，预期请求文件 SHA-256 为 `<request-sha256>`，计划路径为 `<plan-path>`。遵循其中的共享术语、目标语言和 rules。只翻译 tasks 中的 ID，邻接上下文只作理解，不放入结果。输出用于原位覆盖；在完整保留事实、数字和术语的前提下表达紧凑，不能概括删减。若含 review_pages，先渲染并视觉核对整个指定原页，之后才记录指定复核值；没有视觉能力时报告阻塞，不虚构完成。不要读取全文 manifest 或其他批次，不调用外部模型 API，不修改原始文件。候选 JSON 写入 `<candidate-path>`，按下面格式填入身份字段、全部分片译文及分配的页复核。执行 submit，通过后仅返回批次 ID、完成状态和结果路径；失败只返回错误摘要。
+> 使用 `$document-translate`。仅完成 `<batch-id>`。读取 `<request-path>`，预期请求文件 SHA-256 为 `<request-sha256>`，计划路径为 `<plan-path>`。遵循其中的共享术语、目标语言和 rules。只翻译 tasks 中的 ID，邻接上下文只作理解，不放入结果。输出用于原位覆盖；在完整保留事实、数字和术语的前提下表达紧凑，不能概括删减。若含 review_pages，先渲染并视觉核对整个指定原页，之后才记录指定复核值；没有视觉能力时报告阻塞，不虚构完成。不要读取全文 manifest 或其他批次，不调用外部模型 API，不修改原始文件。候选 JSON 写入 `<candidate-path>`，按 request.depth 执行翻译与审校轮次，保留所有 {vN} 公式占位符。按下面格式填入身份字段、全部分片译文、quality_checks 与分配的页复核。执行 submit，通过后仅返回批次 ID、完成状态和结果路径；失败只返回错误摘要。
 
 ```json
 {
@@ -48,14 +52,15 @@ python "$SKILL_ROOT/scripts/translation_batches.py" status work/batches/plan.jso
   "request_sha256": "the exact hash provided by the coordinator",
   "language": "English",
   "translations": {"p1-b1__part_0001": "Translated fragment."},
-  "page_reviews": {"1": "checked"}
+  "page_reviews": {"1": "checked"},
+  "quality_checks": []
 }
 ```
 
 没有分配复核页时填 `{}`。分片 ID 必须完整保留。输出长度快达到宿主上限时，停止并报告，主 Agent 用更小输出预算重建计划；不得提交截断的 JSON。可以先在本地文件逐步追加生成，再整体校验，但文件存在不等于成功。
 
 ```bash
-python "$SKILL_ROOT/scripts/translation_batches.py" submit work/batches/plan.json --batch batch-0001 --candidate work/candidates/batch-0001-worker-1.json
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/translation_batches.py" submit work/batches/plan.json --batch batch-0001 --candidate work/candidates/batch-0001-worker-1.json
 ```
 
 submit 校验来源、身份、语言、覆盖、术语和复核归属，再原子发布独立结果。重复提交同内容是幂等；不同内容不会静默覆盖。结果冲突时主 Agent 先比较、确认旧任务停止，把需替换结果移动到单独隔离目录，再重新提交选定候选。不得移走有效结果只是为了跳过质检。
@@ -63,15 +68,15 @@ submit 校验来源、身份、语言、覆盖、术语和复核归属，再原�
 ## 恢复、合并与质检
 
 ```bash
-python "$SKILL_ROOT/scripts/translation_batches.py" status work/batches/plan.json
-python "$SKILL_ROOT/scripts/translation_batches.py" merge work/batches/plan.json --output work/translations.json
-python "$SKILL_ROOT/scripts/pdf_translate.py" validate work/manifest.json work/translations.json
-python "$SKILL_ROOT/scripts/pdf_translate.py" export work/manifest.json work/translations.json --output-dir output
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/translation_batches.py" status work/batches/plan.json
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/translation_batches.py" merge work/batches/plan.json --output work/translations.json
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/pdf_translate.py" validate work/manifest.json work/translations.json
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/pdf_translate.py" export work/manifest.json work/translations.json --output-dir output
 ```
 
 只有缺失的批次需重做；完整有效结果直接复用。来源 PDF、manifest、术语文件或请求变化会拒绝继续，先创建新计划。若修改了全局术语，应重新核验所有受影响结果，不把旧版本结果硬塞入新计划。分片合并回原块后仍必须放回该块的原文文字框，不是一片一页。每个原块的分片按序重组，缺片、多片、空片、跨语言结果或重复复核都会阻止合并。
 
-主 Agent 逐批检查 glossary 的统一译法和相邻批次衔接，优先核验标题、表头、专有名词、数字和结论；只取该批原文和译文，避免最终检查时又突破 128K。自动覆盖检查不证明翻译准确，最终仍须视觉和语义核验。
+遵循深度约定：direct 不追加全文语义复审；reviewed/multi-pass 由每批 worker 完成其约定校验。主 Agent 只处理明显问题、冲突和结构/视觉检查，不把全文重新载入上下文。自动覆盖检查不证明翻译准确。
 
 ## 能力边界
 

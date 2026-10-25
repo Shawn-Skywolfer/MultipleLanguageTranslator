@@ -1,14 +1,15 @@
 {
   "name": "multiple-language-translator",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "description": "CSV, PDF and verified PowerPoint translation workbench",
   "main": "desktop/main.cjs",
   "scripts": {
-    "test": "node --check app.js && node tests/i18n.test.js && node tests/multimodal.test.js && node tests/pdf-compare.test.js && node tests/pptx-layout.test.js && node tests/settings-desktop.test.js && node tests/pdf-integrity.test.js && node tests/pdf-overlay.test.js",
+    "test": "node --check app.js && node tests/i18n.test.js && node tests/multimodal.test.js && node tests/pptx-layout.test.js && node tests/settings-desktop.test.js && node tests/pdf-engine.test.js",
     "desktop": "electron .",
     "dist:win": "electron-builder --win portable --x64",
-    "test:pdf-cli": "python tests/pdf-cli.test.py"
+    "test:pdf-cli": "python tests/pdf-cli.test.py",
+    "start": "node tools/start_local.cjs"
   },
   "devDependencies": {
     "electron": "42.2.0",
@@ -21,7 +22,6 @@
     "files": [
       "api/**/*",
       "desktop/**/*",
-      "pdf-overlay.js",
       "app.js",
       "i18n.js",
       "index.html",
@@ -32,6 +32,24 @@
         "portable"
       ],
       "artifactName": "MultipleLanguageTranslator-Portable-${version}.exe"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "tools",
+        "to": "pdf-engine/tools",
+        "filter": [
+          "*.py",
+          "requirements-pdf.txt"
+        ]
+      },
+      {
+        "from": "third_party",
+        "to": "pdf-engine/third_party"
+      },
+      {
+        "from": ".pdf-runtime",
+        "to": "pdf-engine/python"
+      }
+    ]
   }
 }

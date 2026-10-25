@@ -5,13 +5,15 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
 
 from pdf_translate import load, sha, validate, write_json
 
-VERSION = 'document-translate/batches-v2'
+VERSION = 'document-translate/batches-v3'
+DEPTH_CHECKS = {'direct': [], 'reviewed': ['accuracy'], 'multi-pass': ['accuracy', 'terminology', 'final']}
 
 
 def digest(value):
@@ -98,7 +100,8 @@ def plan(args):
         raise ValueError('BATCH_PLAN_EXISTS: use status to resume, or choose a new directory.')
     folder.mkdir(parents=True, exist_ok=True)
     identity = dict(schema=VERSION, manifest_sha256=sha(manifest_path), source_sha256=manifest['sha256'],
-                    language=args.language, rules=rules, layout='in-place-white-black-overlay', context_tokens=args.context_tokens,
+                    language=args.language, rules=rules, depth=args.depth, required_checks=DEPTH_CHECKS[args.depth],
+                    layout='PDFMathTranslate', context_tokens=args.context_tokens,
                     max_output_tokens=args.max_output_tokens, task_budget=budget,
                     system_reserve=args.system_reserve, safety_reserve=args.safety_reserve,
                     expansion_factor=args.expansion_factor, agents=args.agents)
@@ -109,7 +112,7 @@ def plan(args):
             if not isinstance(block.get('source'), str) or not block['source'].strip():
                 raise ValueError(f'BATCH_SOURCE_EMPTY: {block.get("id")}')
             # Leave room for IDs, JSON metadata and read-only neighbor context.
-            parts = split_source(block['source'], max(64, budget - 768), rules['protected_terms'] + list(rules['glossary']))
+            parts = split_source(block['source'], max(64, budget - 768), rules['protected_terms'] + list(rules['glossary']) + re.findall(r'\{v\d+\}', block['source']))
             for index, source in enumerate(parts):
                 flat.append(dict(id=f'{block["id"]}__part_{index + 1:04d}', block_id=block['id'],
                                  page=page['page'], part=index + 1, parts=len(parts), source=source,
@@ -151,7 +154,8 @@ def plan(args):
                        source=manifest['source'], language=args.language, shared=rules,
                        tasks=batch['tasks'], review_pages=batch['review_pages'], read_only_context=neighbors,
                        max_output_tokens=args.max_output_tokens,
-                       instructions='Translate only assigned IDs for in-place overlays. Be concise without omitting facts. Preserve IDs, numbers and protected terms. Read-only neighbors are context only. Visually inspect assigned review pages. Write a candidate JSON; run submit to commit it. Do not read the full manifest, other jobs, or export files.')
+                       depth=args.depth, required_checks=DEPTH_CHECKS[args.depth],
+                       instructions='Translate only assigned IDs for PDFMathTranslate. Preserve formula placeholders {vN} exactly, IDs, numbers and protected terms. Direct: translate once, without editorial review. Reviewed: draft then compare against source and revise accuracy once. Multi-pass: draft, accuracy review/revision, terminology review/revision, final source comparison/revision. Actually perform the required checks and record their names in quality_checks. Structural validation always applies. Read-only neighbors are context only. Visually inspect assigned review pages. Write a candidate JSON; run submit to commit it. Do not read the full manifest, other jobs, or export files.')
         if estimate(request) + args.system_reserve + args.safety_reserve + args.max_output_tokens > args.context_tokens:
             raise ValueError(f'BATCH_CONTEXT_EXCEEDED: {job_id}')
         request_path = folder / 'requests' / f'{job_id}.json'
@@ -199,12 +203,16 @@ def validate_result(p, job, data):
         if data.get(key) != expected:
             raise ValueError(f'BATCH_RESULT_ID: {job["id"]} has incorrect {key}.')
     targets = data.get('translations')
+    if data.get('quality_checks', []) != p['identity']['required_checks']:
+        raise ValueError(f'BATCH_DEPTH_CHECKS: {job["id"]} lacks the selected translation reviews.')
     if not isinstance(targets, dict) or set(targets) != {t['id'] for t in request['tasks']}:
         raise ValueError(f'BATCH_RESULT_COVERAGE: {job["id"]} has missing or extra IDs.')
     for task in request['tasks']:
         value = targets[task['id']]
         if not isinstance(value, str) or not value.strip() or '\x00' in value:
             raise ValueError(f'BATCH_RESULT_EMPTY: {task["id"]}')
+        if sorted(re.findall(r'\{v\d+\}', value)) != sorted(re.findall(r'\{v\d+\}', task['source'])):
+            raise ValueError(f'BATCH_FORMULA_PLACEHOLDERS: {task["id"]}')
         for term in p['identity']['rules']['protected_terms']:
             if term in task['source'] and term not in value:
                 raise ValueError(f'BATCH_PROTECTED_TERM: {task["id"]} lacks {term}.')
@@ -278,7 +286,8 @@ def merge(args):
             raise ValueError(f'BATCH_PART_COVERAGE: {key}')
         targets[key] = '\n'.join(fragments[x[2]].strip() for x in parts)
     result = dict(language=p['identity']['language'], protected_terms=p['identity']['rules']['protected_terms'],
-                  translations=targets, page_reviews=reviews)
+                  translations=targets, page_reviews=reviews,depth=p['identity']['depth'],
+                  quality_checks={job['id']:p['identity']['required_checks'] for job in p['jobs']})
     summary = validate(load(p['manifest']), result)
     output = Path(args.output).resolve()
     reserved = {Path(p['manifest']).resolve(), Path(args.plan).resolve(), Path(load(p['manifest'])['source']).resolve()}
@@ -302,6 +311,7 @@ def main():
     p = commands.add_parser('plan')
     p.add_argument('manifest'); p.add_argument('--language', default='English'); p.add_argument('--rules')
     p.add_argument('--work-dir', required=True); p.add_argument('--agents', type=int, default=3)
+    p.add_argument('--depth',choices=list(DEPTH_CHECKS),default='direct')
     p.add_argument('--context-tokens', type=int, default=128000)
     p.add_argument('--max-output-tokens', type=int, default=8192)
     p.add_argument('--source-budget', type=int, default=8000)

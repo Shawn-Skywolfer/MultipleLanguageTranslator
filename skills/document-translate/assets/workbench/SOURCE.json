@@ -1,15 +1,12 @@
 {
   "repository": "https://github.com/Shawn-Skywolfer/MultipleLanguageTranslator",
-  "base_commit": "8bfb1cd188cde0dbc5427ae4d6e1deb8c4076161",
+  "base_commit": "d86cb4bb239cdd4212d97c0d1dee1f2d100a5adb",
   "enhancements": [
-    "PDF coverage gate",
-    "mixed-page OCR",
-    "bounded translation retries",
-    "parse-failure recovery",
-    "agent-native verified bilingual PDF workflow",
-    "128K context/output budgeting",
-    "parallel agent jobs and resumable merge",
-    "fixed 2N in-place white/black PDF overlays",
-    "rotation and crop coordinate verification"
+    "PDFMathTranslate 1.9.12 pinned engine",
+    "formula-preserving Agent bridge",
+    "direct/reviewed/multi-pass translation",
+    "128K bounded parallel jobs",
+    "fixed 2N white/black bounded typesetting",
+    "local Python and portable Windows runtime"
   ]
 }

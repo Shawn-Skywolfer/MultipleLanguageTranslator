@@ -109,7 +109,7 @@
     <div class="card intro">
       <div class="intro-copy">
         <h1 id="workspaceTitle">Digital Power 多格式翻译工作台</h1>
-        <p class="muted">统一处理 `CSV`、`PDF` 和 `PPTX`。CSV 继续保留原有批量翻译能力；PDF 支持文字抽取与带坐标的 OCR，可导出白底黑字原位对照 PDF / HTML 及双语 Markdown / DOCX；PPTX 保留原始页，并在每页后新增一页对应的高亮译文页。模型调用统一走站内 API 代理，适合 Vercel 一键部署。</p>
+        <p class="muted">统一处理 CSV、PDF 和 PPTX。PDF 使用本地 PDFMathTranslate 引擎保留公式与版面，按原页、译页逐页对照；可选直接翻译或多轮校验。CSV/PPTX 继续保留现有功能，模型调用沿用当前配置。PDF 需运行本地版。</p>
       </div>
       <div class="pill-row"><span class="pill">CSV 批量翻译</span><span class="pill">PDF 文本抽取 + OCR</span><span class="pill">双语 Markdown / DOCX</span><span class="pill">图文对照 HTML</span><span class="pill">PPTX 逐页译文页</span><span class="pill">Vercel 友好</span></div>
     </div>
@@ -242,10 +242,10 @@
         <div class="notice blue" id="documentFileInfo">尚未上传文档。</div>
       </div>
       <div class="card panel">
-        <h2>文档翻译参数</h2>
+        <h2>文档翻译参数</h2><div class="field"><label>PDF 排版引擎：PDFMathTranslate</label><select id="docPdfLayout"><option value="standard">标准版面识别（公式、复杂版面和扫描页）</option><option value="native-fast">原生文字快速解析（跳过版面模型与 OCR）</option></select><div class="mini">PDF 需运行本地版。翻译深度决定模型调用次数；排版模式独立控制解析速度。</div></div><div class="field"><label class="toggle-label"><input type="checkbox" id="docPdfReviewConfirmed" /><span>已核对图片/OCR 识别结果（含图片的 PDF 导出前必选）</span></label><div id="pdfRecognizedText" class="mini"></div><button type="button" id="docPdfReviewContinueBtn" class="hidden">继续已核对的 PDF 翻译</button></div>
         <div class="grid">
           <div class="field"><label>源语言</label><select id="docSourceLang"><option>English</option><option>Chinese</option><option>Auto</option></select></div>
-          <div class="field"><label>工作流模式</label><select id="docWorkflowMode"><option value="full">完整 DSL：初译 + 建议 + 改译</option><option value="fast">快速模式：直接最终翻译</option></select></div>
+          <div class="field"><label>工作流模式</label><select id="docWorkflowMode"><option value="fast">直接翻译（最快，1 次调用）</option><option value="reviewed">校验后修订（2 次调用）</option><option value="multi-pass">多轮校验翻译（5 次调用）</option><option value="full">完整 DSL：初译 + 建议 + 改译</option></select></div>
         </div>
         <div class="grid">
           <div class="field"><label>并发数</label><select id="docConcurrency"><option selected>1</option><option>2</option><option>3</option><option>4</option></select></div>
@@ -310,8 +310,8 @@
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
 <script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
-<script src="./pdf-overlay.js"></script>
+
+
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="./i18n.js"></script>

@@ -8,6 +8,17 @@
   const originalAttributes = new WeakMap();
 
   const english = {
+    '统一处理 CSV、PDF 和 PPTX。PDF 使用本地 PDFMathTranslate 引擎保留公式与版面，按原页、译页逐页对照；可选直接翻译或多轮校验。CSV/PPTX 继续保留现有功能，模型调用沿用当前配置。PDF 需运行本地版。': 'Translate CSV, PDF and PPTX. PDF uses the local PDFMathTranslate engine to preserve formulas and layout, with original/translated page pairs and a choice of direct or reviewed translation. CSV/PPTX retain their existing workflows and model settings. PDF requires the local edition.',
+    'PDF 排版引擎：PDFMathTranslate': 'PDF layout engine: PDFMathTranslate',
+    '标准版面识别（公式、复杂版面和扫描页）': 'Standard layout analysis (formulas, complex pages and scans)',
+    '原生文字快速解析（跳过版面模型与 OCR）': 'Fast native text (skip layout model and OCR)',
+    'PDF 需运行本地版。翻译深度决定模型调用次数；排版模式独立控制解析速度。': 'PDF requires the local edition. Translation depth controls model calls; layout mode separately controls parsing speed.',
+    '直接翻译（最快，1 次调用）': 'Direct translation (fastest, 1 call)',
+    '校验后修订（2 次调用）': 'Review and revise (2 calls)',
+    '多轮校验翻译（5 次调用）': 'Multiple review passes (5 calls)',
+    '已核对图片/OCR 识别结果（含图片的 PDF 导出前必选）': 'Image/OCR text has been reviewed (required for PDFs containing images)',
+    '继续已核对的 PDF 翻译': 'Continue translation after review',
+
     '导出原位对照 PDF（白底黑字覆盖原文）': 'Export in-place bilingual PDF (black text on white overlays)',
     'Digital Power 多格式翻译工作台': 'Digital Power Multi-format Translation Workbench',
     '多格式翻译工作台': 'Multi-format Translation Workbench',

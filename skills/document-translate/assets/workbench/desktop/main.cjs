@@ -13,13 +13,13 @@ const STATIC_FILES = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
-  ['/pdf-overlay.js', ['pdf-overlay.js', 'text/javascript; charset=utf-8']],
   ['/i18n.js', ['i18n.js', 'text/javascript; charset=utf-8']],
 ]);
 const API_HANDLERS = new Map([
   ['/api/chat-completions', require('../api/chat-completions.js')],
   ['/api/models', require('../api/models.js')],
   ['/api/pv', require('../api/pv.js')],
+  ['/api/pdf-engine', require('../api/pdf-engine.js')],
 ]);
 
 function sha256(buffer) {
@@ -186,6 +186,7 @@ function responseAdapter(response) {
     status(code) { statusCode = code; return adapter; },
     send(value) { response.statusCode = statusCode; response.end(Buffer.isBuffer(value) ? value : String(value)); },
     json(value) { response.setHeader('Content-Type', 'application/json; charset=utf-8'); adapter.send(JSON.stringify(value)); },
+    on(...args) { response.on(...args); },
   };
   return adapter;
 }
@@ -206,9 +207,12 @@ function createLocalServer() {
   return http.createServer(async (request, response) => {
     try {
       const url = new URL(request.url, 'http://127.0.0.1');
+      const allowedHosts = [`127.0.0.1:${server.address().port}`, `localhost:${server.address().port}`];
+      if (!allowedHosts.includes(request.headers.host) || request.headers.origin && !allowedHosts.map(h=>`http://${h}`).includes(request.headers.origin)) { response.statusCode=403; response.end(); return; }
       const handler = API_HANDLERS.get(url.pathname);
       if (handler) {
         request.body = request.method === 'POST' ? await readJsonBody(request) : {};
+        request.mltLocal = true;
         request.query = Object.fromEntries(url.searchParams);
         await handler(request, responseAdapter(response));
         return;

@@ -1,6 +1,6 @@
 # Digital Power 多格式翻译工作台
 
-一个适合直接部署到 Vercel 的前端 + Serverless Functions 小工具，用于：
+一个多格式翻译工作台：CSV/PPTX 可部署到 Vercel，PDFMathTranslate PDF 模块在本地运行。
 
 - 中英文界面：页面右上角可随时切换中文 / English，并自动记住本机选择
 - `CSV` 批量翻译：保持原有多语言批量翻译能力
@@ -8,7 +8,7 @@
 - 输出每个目标语言独立下载的双语 `Markdown` 与双语 `DOCX`
 - `PPTX` 翻译稿生成：保留原始页，并在每页后新增高亮译文页
 - 多模态图片翻译：识别 PPTX 图片中的文字和位置，在译文页对应区域覆盖译文
-- 继续沿用三轮翻译审校工作流：`初译 -> 建议 -> 改译`
+- 提供直接翻译、校验后修订、多轮校验，并兼容原三轮 DSL
 - 支持标准翻译库、术语保护、自定义规则和多目标语言
 - 默认直接进入文档翻译；模型配置位于右上角独立“设置”入口
 - 模型、目标语言、重试、输出、术语和规则支持版本化 JSON 一键导入 / 导出
@@ -17,7 +17,7 @@
 ## 教程与演示
 
 - [Step by Step 使用教程](docs/TUTORIAL.md)：部署、模型配置、CSV / PDF / PPTX 全流程详解与常见问题
-- [功能演示动画](docs/tutorial-video.html)：浏览器打开即可播放约 78 秒的全功能演示；点击「⬇ 导出视频」一键录制并下载 WebM 视频文件（可导入剪映 / Premiere 转 MP4）
+- [旧版功能演示动画](docs/tutorial-video.html)：展示原 CSV/PPTX 与历史 PDF 交互，PDF 新版以当前教程为准；浏览器打开可播放约 78 秒演示；点击「⬇ 导出视频」一键录制并下载 WebM 视频文件（可导入剪映 / Premiere 转 MP4）
 
 ## 项目结构
 
@@ -47,12 +47,12 @@
 ### 第一阶段
 
 - 支持 `PDF`
-- 文字型 PDF：直接抽取文本块（保留每个文本块在页面上的坐标）
-- 图片型 PDF：当文本不足时自动回退到 `Tesseract.js` OCR
+- 文字型 PDF：使用 PDFMathTranslate 识别段落、公式与位置
+- 图片型 PDF：使用 PDFMathTranslate 的本地 OCR（需本地版）
 - 输出：
   - 双语 `Markdown`
   - 双语 `DOCX`
-  - 图文对照 `HTML`：左侧为原文页面高清截图（图表、版面 100% 原貌），右侧保留同一原始背景，并在各原文坐标内以白底黑字覆盖译文，按原文区域自动缩小字体。适合快速阅读带大量图表的资料型 PDF（如分析师报告）
+  - 图文对照 `HTML`：按原页、对应译页逐页截图，展示引擎最终排版结果。适合快速阅读带大量图表的资料型 PDF（如分析师报告）
 - 每个目标语言单独导出一个文件
 
 ### 第二阶段
@@ -153,7 +153,7 @@ Vercel 会自动：
 
 ## 说明与限制
 
-- PDF 的 Markdown / DOCX 输出优先强调“原文 / 译文对应关系”和审校效率；版面与图表原貌请使用图文对照 HTML 输出（原文页以截图呈现，零失真）。
+- PDF 的 Markdown / DOCX 输出优先强调“原文 / 译文对应关系”和审校效率；版面与图表原貌请使用图文对照 HTML 输出（由最终 PDF 页面渲染）。
 - 图文对照 HTML 中，位图图表内部的文字暂不做 OCR 翻译（图表以原样呈现）；矢量文字图表的文字会作为文本块参与翻译。
 - 勾选图文对照 HTML 时会逐页渲染页面截图，超大 PDF 的解析时间和输出文件体积会相应增加。
 - Web 版可执行 ZIP/CRC/OOXML 与落盘回读校验，但浏览器无法直接调用 Microsoft PowerPoint，因此只有 Windows 便携版且本机安装 PowerPoint 时，才能给出“PowerPoint 真实打开通过”的最终证明。
@@ -172,67 +172,63 @@ Vercel 会自动：
 - 文档任务缓存与断点续跑
 - 可视化块级翻译预览
 
-## Agent Skill 与强化 PDF 流程
+## PDFMathTranslate 引擎、Skill 和本地版
 
-本项目的可安装 Skill 位于 [`skills/document-translate`](skills/document-translate)。将整个目录复制到支持 Agent Skills 的客户端的 skills 目录，通过 `$document-translate` 调用。Skill 捆绑项目工作台源码，可运行现有 CSV/PPTX/PDF 功能；不要求每次从 GitHub 克隆。
+PDF 模块已替换为 [PDFMathTranslate](https://github.com/PDFMathTranslate/PDFMathTranslate) 1.9.12，固定源码 fe3d2f37ef1b54abff5ebda091a7fd4fac9fbd08。使用真实 translate_stream、公式识别、DocLayout-YOLO / pdf-inspector 与上游排版；适配层补充 Agent 翻译接口、白底黑字、原段落缩放与有限失败处理。修改后的上游 converter 在 tools/pdfmath_converter.py，来源与 AGPL-3.0 许可证见 third_party/pdfmathtranslate。
 
-PDF 增强包括：
+### 本地运行
 
-- 浏览器工作台对混排页中的图片执行本地 OCR；保留原生文字及数字标签，复用 OCR Worker。
-- PDF 翻译失败块有两轮有限补译；缺少、空白或错误结果阻止全部 PDF 格式导出。
-- OCR 识别为空而页面非空时停止；解析失败逐文件报告，资源释放后恢复按钮，取消不输出半成品。
-- 新增无模型 API 依赖的 Agent 原生 PDF CLI：当前 Agent 按文本块翻译，脚本负责源文件 SHA-256 绑定、术语检查、覆盖检查与输出。
-- CLI 支持文字 PDF、扫描页和混排页；生成“原页＋对应译文页”双语 PDF、Markdown、原页截图/译文对照 HTML 及 JSON 验证报告。固定为原稿两倍页数，译文在原始坐标以白底黑字覆盖，字号自适应缩小；放不下时报具体区域，不续页、不裁切。
-- PDF 在临时目录生成后重新打开，校验每个译文块可提取、渲染所有输出页、逐原页比对渲染像素，再发布结果。扫描/混排页必须有视觉复核记录。
-
-### PDF CLI
-
-需要 Python 3.10+ 和 `tools/requirements-pdf.txt` 中的依赖。扫描页还需 Tesseract 及源语言数据；中文使用 `chi_sim+eng`，不是仅安装 `eng`。
+安装 Python **3.11 或 3.12**、Node.js **20+**。Windows 双击 `Start-Local.cmd`；macOS/Linux 运行 `./start-local.sh`。首次联网安装独立 Python 引擎环境，启动后访问 http://127.0.0.1:8765 。也可手动：
 
 ```bash
-python -m pip install -r tools/requirements-pdf.txt
-python tools/pdf_translate.py extract report.pdf --manifest work/manifest.json --ocr auto --ocr-language chi_sim+eng
-# Agent 按 manifest 稳定 ID 翻译，写出 work/translations.json，并视觉核对 OCR 页。
-python tools/pdf_translate.py validate work/manifest.json work/translations.json
-python tools/pdf_translate.py export work/manifest.json work/translations.json --output-dir output
+python3.12 tools/setup_pdf.py
+npm start
 ```
 
-翻译 JSON、页复核格式和故障处理见 [Skill PDF 流程](skills/document-translate/references/pdf-workflow.md)。浏览器工作台新增默认勾选的原位对照 PDF，也提供原位覆盖 HTML 和文字审阅用 Markdown / DOCX。Skill 使用原生 CLI 生成具有可提取译文文本的原位 PDF；浏览器用高分辨率字图覆盖，复用系统中文字体，避免依赖外部 CJK 字体下载。两种路径均复制原 PDF 页面并严格保持 2N 页。
+Windows CI 的便携 EXE 会同时打包 CPython 与引擎依赖；用户无需另装 Python/Node。首次标准布局模型和目标字体仍需联网，工作台 CDN 与模型端点也需要网络。本地源码包与便携 EXE 有此区别，不要将源码 ZIP 描述为已离线集成全部运行时。
 
-### 本地工作台与维护
+PDF 现在需要本地 Python，Vercel 静态部署中的 PDF 会明确要求使用本地版。CSV/PPTX 继续使用现有路径。PPTX 的真实 PowerPoint 打开门禁不变。
+
+### 翻译深度
+
+| 深度 | Skill 参数 | 工作台模型调用（未命中翻译记忆时，重试另计） |
+|---|---|---|
+| 直接翻译（默认） | --depth direct | 1 次 |
+| 校验后修订 | --depth reviewed | 2 次 |
+| 多轮校验翻译 | --depth multi-pass | 5 次 |
+
+所有深度保留覆盖、公式占位符、源文件绑定和导出验证；direct 不额外做全文语义复审。工作台兼容原 full DSL（3 次）。
+
+排版独立选择 standard（真实版面模型，扫描与复杂版面）或 native-fast（上游原生坐标解析，不做 OCR/ONNX）。不能用 native-fast 绕过扫描页。混排图片文字和保留表格标签需核对，上游不保证自动全部识别；未识别完整应先补可靠 OCR 文本层/单独扫描稿再提取。
+
+### Agent Skill
+
+可安装目录为 [skills/document-translate](skills/document-translate)。当前 Agent 翻译引擎任务，不要求另配模型 API Key；脚本负责排版与验证。工作台则使用用户自己的模型设置。
 
 ```bash
-node skills/document-translate/scripts/start_workbench.cjs 8765
-# 打开 http://127.0.0.1:8765
+python3.12 tools/setup_pdf.py
+.venv-pdf/bin/python tools/pdf_translate.py extract report.pdf --manifest work/manifest.json --language Chinese --source-language en --layout standard --ocr-language eng
+.venv-pdf/bin/python tools/translation_batches.py plan work/manifest.json --language Chinese --depth direct --work-dir work/batches --agents 3
+.venv-pdf/bin/python tools/translation_batches.py status work/batches/plan.json
+# 按 Skill 生成、submit 所有候选结果后：
+.venv-pdf/bin/python tools/translation_batches.py merge work/batches/plan.json --output work/translations.json
+.venv-pdf/bin/python tools/pdf_translate.py export work/manifest.json work/translations.json --output-dir output
 ```
 
-该服务只监听本机并拒绝跨来源请求，沿用原模型代理。工作台 CDN、OCR 语言数据与模型调用仍需对应网络连接；Agent 原生 PDF 翻译不需要另配 API Key。Windows 的 PowerPoint 真实打开门禁保持不变。
+Windows 解释器为 `.venv-pdf\Scripts\python.exe`。完整流程见 [SKILL.md](skills/document-translate/SKILL.md)。旧 manifest / 批次缓存必须重新生成。公式占位符如 `{v0}` 必须严格保留。
 
-维护者修改项目后运行 `python tools/sync_skill.py`，同步经过测试的工作台快照和 PDF 脚本；勿把 API Key、个人配置、输入或输出文档加入 Skill。执行 `npm test` 检查前端及现有 PPTX 行为；执行 `python tests/pdf-cli.test.py` 检查 PDF 原生链路（含真实 Tesseract 英文 OCR）。PyMuPDF 按其上游许可使用。
+128K 预算、8192 输出预算、默认 3 个宿主原生 Agent（允许 1–8）、断点恢复和严格合并继续支持；UTF-8 字节估算是保守预算，不是精确 tokenizer。没有多 Agent 工具时逐批串行。选择深度后，各批在自己的上下文内完成审校，不汇总全文到主 Agent。
 
-检查证明的是文件能被所用引擎解析/渲染、抽取块被覆盖及原页视觉保留；OCR 完整性、翻译准确性、表格阅读关系仍需逐页审阅，不能据此宣称所有阅读器绝对无错误。
+### 输出与测试
 
-### 128K 上下文与多 Agent 并行
-
-Skill 的原生 PDF 流程新增 `tools/translation_batches.py`：
+输出固定 2N 页，每页原稿后紧跟对应译页。翻译区域白底黑字，在原区域整体缩放；低于最小字号时拒绝发布，不加续页。PDF 具有可提取译文文字；HTML 由最终 PDF 逐页截图生成；Markdown/DOCX 是文字审阅稿。导出回读 2N、原页像素、尺寸、旋转及 CropBox。排版/语义与 OCR 完整性仍需实际视觉核对，不声称任意 PDF 都完全无差异。
 
 ```bash
-python tools/translation_batches.py plan work/manifest.json --language English --context-tokens 128000 --max-output-tokens 8192 --agents 3 --work-dir work/batches
-python tools/translation_batches.py status work/batches/plan.json
-# 由宿主多 Agent 工具派发独立 request；各 worker 用 submit 提交独立候选。
-python tools/translation_batches.py merge work/batches/plan.json --output work/translations.json
+npm test
+.venv-pdf/bin/python tests/pdf-cli.test.py
+.venv-pdf/bin/python tests/translation-batches.test.py
+.venv-pdf/bin/python tests/pdf-local.test.py
+python tools/sync_skill.py
 ```
 
-默认上下文 128K、单次输出预算 8192、最多 3 个并行 Agent（可设 1–8，受宿主配额限制）。规划器同时预留系统、工具、安全和术语空间，并按译文膨胀限制批次；超长原块自动按 Unicode 安全边界分片。使用保守 UTF-8 字节估算，不能替代模型的实际分词器或改变宿主的上下文/输出设置。
-
-主 Agent 只读取调度摘要，worker 在新会话中读取各自批次、共享术语与少量相邻上下文。结果采用独立文件与原子排他提交；身份、语言、来源版本、覆盖、复核归属及分片顺序不一致会阻止合并。status 支持断点续做，完整批次不重跑。没有真实多 Agent 工具时按相同批次串行，不把脚本线程称为 Agent。
-
-详细调度与 worker 提示见 [并行翻译流程](skills/document-translate/references/parallel-translation.md)。此分片器用于原生 PDF；CSV/PPTX 沿用工作台，可按独立文件或语言分配独立实例。执行 `python tests/translation-batches.test.py` 测试预算、Unicode、并发提交、冲突拒绝、断点恢复和严格合并。
-
-### 原位覆盖 PDF 导出
-
-原稿 N 页固定输出 2N 页，按原页、对应译文页交替。译文页保留原始 PDF 背景，在准确文字框内添加不透明白底及黑色译文，字号从源字号自适应缩小，不扩大框或增加续页。单个框在最小字号仍放不下时拒绝导出并报告位置，不能截断、删减事实或改用阅读稿排版。
-
-原生 CLI 回读验证独立译文层、逐块文本、页数、旋转、裁剪和原页像素，并检查译文区域以外的像素未改变。浏览器通过 PDF.js 提取显示坐标和有坐标的 OCR 行；使用 viewport 逆变换处理旋转/CropBox，通过 pdf-lib 复制原页并添加自适应字图覆盖，导出后再用 PDF.js 渲染比对。图文对照 HTML 采用相同坐标和白底黑字覆盖。
-
-旧 manifest 必须重新 extract；旧批次也需重新规划。128K、多 Agent 调度和断点恢复仍保留，分片在合并后回到原文字框。`tests/pdf-browser.test.py` 用真实 PDF.js、pdf-lib、Canvas 运行浏览器导出核心，再由 PyMuPDF 独立检查 0/90/180/270 度、裁剪、多页及区域外保真；没有把它描述为完整浏览器 UI 或本机 Acrobat 测试。
+测试使用真实 PDFMathTranslate 引擎与本地 HTTP/Python 导出链路，覆盖双栏、中文、公式、裁剪、页面旋转、扫描 OCR、长译文拒绝、源文件保留及深度校验记录。没有将其称作完整 Chromium UI / Acrobat 测试。
