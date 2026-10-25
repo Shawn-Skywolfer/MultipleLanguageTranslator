@@ -1429,7 +1429,7 @@ async function extractPdfDocument(file, sourceLang) {
   let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));
   log('documentLog','PDFMathTranslate 正在解析 '+file.name+'；首次运行可能下载版面模型和字体。');
   const prepared=await pdfEngineRequest({op:'prepare',pdf:btoa(binary),source_language:sourceLang,
-    language:'English',layout:$('docPdfLayout')?.value||'standard'});
+    language:selectedLangs()[0]||'English',layout:$('docPdfLayout')?.value||'standard'});
   const reviewPages=prepared.manifest.pages.filter(p=>p.review_required);
   if(reviewPages.length){
     const panel=$('pdfRecognizedText');panel.replaceChildren();

@@ -116,6 +116,25 @@ def run_engine(data, manifest, targets=None, min_font_size=.5):
                 bridge.records[key]=block;manifest['pages'][page.number]['blocks'].append(block)
         if groups:
             manifest['pages'][page.number]['review_required'] = True
+        if targets is not None:
+            # Exercise the same upstream OCR font/CSS fitting before it renders;
+            # upstream's scale_low=0 would otherwise allow arbitrarily tiny text.
+            archive=fitz.Archive((font.buffer,'ocr.ttf'))
+            with fitz.open() as probe:
+                target=probe.new_page(width=page.rect.width,height=page.rect.height)
+                for bounds,source,size,_ in groups:
+                    key=bridge.block_id(source,page.number+1)
+                    text=targets.get(key,'')
+                    centered=any(detection.names[int(box.cls)]=='title' and
+                        (fitz.Rect(*box.xyxy)&bounds).get_area()>bounds.get_area()/2 for box in detection.boxes)
+                    align='center' if centered else 'justify'
+                    css=('@font-face {font-family:ocr;src:url(ocr.ttf);}'
+                         f'body {{font-family:ocr;font-size:{size}pt;line-height:1.2;margin:0;}}'
+                         f'p {{margin:0;overflow-wrap:break-word;text-align:{align};}}')
+                    spare,scale=target.insert_htmlbox(bounds,'<p>'+html.escape(text)+'</p>',css=css,
+                        archive=archive,scale_low=min(1,min_font_size/max(size,.1)))
+                    if spare<0 or size*scale<min_font_size-.01:
+                        raise ValueError('PDF_TEXT_DOES_NOT_FIT: '+key)
         from types import SimpleNamespace
         proxy=SimpleNamespace(translate=lambda text:bridge.translate(text,page.number+1))
         return old_ocr(page,detection,proxy,font,thread,cancellation_event)

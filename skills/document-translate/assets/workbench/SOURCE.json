@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/Shawn-Skywolfer/MultipleLanguageTranslator",
-  "base_commit": "d86cb4bb239cdd4212d97c0d1dee1f2d100a5adb",
+  "base_commit": "4c22d2996becefb6d151d1e29fb6652f3bf84508",
   "enhancements": [
     "PDFMathTranslate 1.9.12 pinned engine",
     "formula-preserving Agent bridge",

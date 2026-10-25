@@ -62,6 +62,7 @@ class PDFMathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             f=Path(tmp);source=self.fixture(f);before=m.sha(source)
             manifest=self.prepare(source,f/'manifest.json');targets=self.targets(manifest)
+            first=next(iter(targets['translations']));targets['translations'][first]+='\n核验'
             self.assertTrue(any(m.placeholders(b['source']) for p in manifest['pages'] for b in p['blocks']), 'actual engine formula protection must be exercised')
             result=self.output(f,manifest,targets)
             with fitz.open(source) as original,fitz.open(result) as output:
@@ -116,5 +117,11 @@ class PDFMathTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 m.export(NS(manifest=str(f/'manifest.json'),translations=str(f/'translations.json'),output_dir=str(f/'out'),min_font_size=3.5))
             with fitz.open(f/'out/scan_Chinese_bilingual.pdf') as doc:self.assertEqual(doc.page_count,2);self.assertIn('100',doc[1].get_text())
+            good=(f/'out/scan_Chinese_bilingual.pdf').read_bytes()
+            first=next(iter(targets['translations']));targets['translations'][first]='超长译文'*5000
+            m.write_json(f/'translations.json',targets)
+            with self.assertRaisesRegex(ValueError,'DOES_NOT_FIT'):
+                m.export(NS(manifest=str(f/'manifest.json'),translations=str(f/'translations.json'),output_dir=str(f/'out'),min_font_size=3.5))
+            self.assertEqual(good,(f/'out/scan_Chinese_bilingual.pdf').read_bytes())
 
 if __name__=='__main__':unittest.main()

@@ -414,7 +414,9 @@ class TranslateConverter(PDFConverterEx):
             return f"ET q 1 0 0 1 {x:f} {y:f} cm [] 0 d 0 J {linewidth:f} w 0 0 m {xlen:f} {ylen:f} l S Q BT "
 
         for id, new in enumerate(news):
-            new = add_cjk_latin_spacing(new)
+            # A bounded Agent batch may merge a paragraph's fragments with newlines.
+            # Whitespace is typeset by this engine, not emitted as a missing glyph.
+            new = add_cjk_latin_spacing(re.sub(r'\s+', ' ', new).strip())
             x: float = pstk[id].x                       # 段落初始横坐标
             y: float = pstk[id].y                       # 段落初始纵坐标
             x0: float = pstk[id].x0                     # 段落左边界
