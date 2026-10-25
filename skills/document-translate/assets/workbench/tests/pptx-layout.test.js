@@ -92,7 +92,7 @@ function slice(startMarker, endMarker) {
 }
 const code = [
   slice('\nfunction localNameNodes', '\nfunction emuToInch'),
-  slice('\nfunction rebalanceLinesToCount', '\nfunction buildPdfMarkdown'),
+  slice('\nfunction rebalanceLinesToCount', '\nasync function buildPdfDocx'),
   slice('\nfunction nextNumericId', '\nasync function buildTranslatedPptx'),
 ].join('\n');
 const context = {

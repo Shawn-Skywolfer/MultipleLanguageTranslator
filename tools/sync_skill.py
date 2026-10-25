@@ -7,10 +7,14 @@ import subprocess
 
 root = Path(__file__).resolve().parents[1]
 skill = root / 'skills/document-translate'
-shutil.copy2(root / 'tools/pdf_translate.py', skill / 'scripts/pdf_translate.py')
+for name in ['pdf_translate.py', 'pdfmath_converter.py', 'translation_batches.py', 'setup_pdf.py', 'requirements-pdf.txt']:
+    shutil.copy2(root / 'tools' / name, skill / 'scripts' / name)
 workbench = skill / 'assets/workbench'
+
+if workbench.exists():
+    shutil.rmtree(workbench)
 workbench.mkdir(parents=True, exist_ok=True)
-for name in ['app.js', 'index.html', 'i18n.js', 'package.json', 'api', 'desktop', 'tests']:
+for name in ['app.js', 'index.html', 'i18n.js', 'package.json', 'Start-Local.cmd', 'start-local.sh', 'api', 'desktop', 'tests', 'third_party']:
     source = root / name
     if source.is_dir():
         shutil.copytree(source, workbench / name, dirs_exist_ok=True,
@@ -18,12 +22,13 @@ for name in ['app.js', 'index.html', 'i18n.js', 'package.json', 'api', 'desktop'
     else:
         shutil.copy2(source, workbench / name)
 (workbench / 'tools').mkdir(exist_ok=True)
-for name in ['pdf_translate.py', 'requirements-pdf.txt']:
+for name in ['pdf_translate.py', 'pdfmath_converter.py', 'pdf_worker.py', 'translation_batches.py', 'setup_pdf.py', 'start_local.cjs', 'requirements-pdf.txt']:
     shutil.copy2(root / 'tools' / name, workbench / 'tools' / name)
 (workbench / 'SOURCE.json').write_text(json.dumps({
     'repository': 'https://github.com/Shawn-Skywolfer/MultipleLanguageTranslator',
     'base_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
-    'enhancements': ['PDF coverage gate', 'mixed-page OCR', 'bounded translation retries',
-                     'parse-failure recovery', 'agent-native verified bilingual PDF workflow'],
+    'enhancements': ['PDFMathTranslate 1.9.12 pinned engine', 'formula-preserving Agent bridge',
+                     'direct/reviewed/multi-pass translation', '128K bounded parallel jobs',
+                     'fixed 2N white/black bounded typesetting', 'local Python and portable Windows runtime'],
 }, indent=2) + '\n', encoding='utf-8')
 print(skill)

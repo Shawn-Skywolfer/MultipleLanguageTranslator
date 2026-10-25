@@ -1,0 +1,9 @@
+# Isolated Python 3.11/3.12 environment; pinned upstream source (includes OCR and native-fast).
+pdf2zh[ultrafast,ocr] @ https://github.com/PDFMathTranslate/PDFMathTranslate/archive/fe3d2f37ef1b54abff5ebda091a7fd4fac9fbd08.zip
+# Upstream supports peewee 3; peewee 4 removes its cache schema compatibility.
+peewee>=3.17.8,<4
+# Pin the native CPU stack to a tested compatible ABI, avoiding duplicate OpenCV major versions.
+numpy==2.2.6
+opencv-python==4.11.0.86
+opencv-python-headless==4.11.0.86
+onnxruntime==1.22.1

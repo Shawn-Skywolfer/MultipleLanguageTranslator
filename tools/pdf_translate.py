@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PDF manifest -> agent translations -> verified bilingual PDF/HTML/Markdown. No API calls."""
+"""PDFMathTranslate adapter: extract Agent jobs, replay translations, verify fixed-page output."""
 import argparse
 import base64
 import hashlib
@@ -10,246 +10,283 @@ from pathlib import Path
 import re
 import sys
 import tempfile
-import unicodedata
 
-SCHEMA = 'document-translate/pdf-v1'
+SCHEMA = 'document-translate/pdfmath-v1'
+ENGINE_COMMIT = 'fe3d2f37ef1b54abff5ebda091a7fd4fac9fbd08'
 
 
-def engine():
-    try:
-        import pymupdf
-        return pymupdf
-    except ImportError as exc:
-        raise ValueError('Install the PDF dependency: python -m pip install "PyMuPDF>=1.26.6,<1.28"') from exc
+def load(path):
+    return json.loads(Path(path).read_text(encoding='utf-8'))
 
 
 def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def load(path):
-    def unique(pairs):
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f'PDF_DUPLICATE_JSON_KEY: {key}')
-            result[key] = value
-        return result
-    return json.loads(Path(path).read_text(encoding='utf-8'), object_pairs_hook=unique)
-
-
 def write_json(path, data):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+    path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
 
-def normalized(value):
-    return re.sub(r'\s+', '', unicodedata.normalize('NFKC', value).replace('\u00ad', ''))
+def engine():
+    import pymupdf
+    import pdf2zh
+    if pdf2zh.__version__ != '1.9.12':
+        raise ValueError('PDF_ENGINE_VERSION: run tools/setup_pdf.py to install the pinned PDFMathTranslate engine.')
+    return pymupdf
 
 
-def open_source(path):
+def language_code(value):
+    names = {'english':'en','chinese':'zh','简体中文':'zh','中文':'zh','traditional chinese':'zh-tw',
+             '繁體中文':'zh-tw','japanese':'ja','korean':'ko','german':'de','french':'fr','spanish':'es',
+             'italian':'it','portuguese':'pt','russian':'ru','arabic':'ar','auto':'en'}
+    return names.get(value.lower().strip(), value.lower().strip())
+
+
+def placeholders(text):
+    return sorted(re.findall(r'\{v\d+\}', text))
+
+
+class Bridge:
+    def __init__(self, manifest, targets=None, min_font_size=.5):
+        self.manifest, self.targets = manifest, targets
+        self.min_font_size = min_font_size
+        self.records = {}
+        self.errors = []
+        self.seen = set()
+
+    def block_id(self, text, page):
+        return f'p{page}-pm-' + hashlib.sha256(text.encode()).hexdigest()[:24]
+
+    def register(self, page, sources, paragraphs):
+        for source, p in zip(sources, paragraphs):
+            if not source.strip() or re.fullmatch(r'\{v\d+\}', source.strip()):
+                continue
+            number = page.pageid + 1
+            key = self.block_id(source, number)
+            bbox = [p.x0, page.height-p.y1, p.x1, page.height-p.y0]
+            if key not in self.records:
+                block = dict(id=key, source=source, bbox=bbox, font_size=p.size, rotation=0,
+                             occurrences=[dict(page=number,bbox=bbox)])
+                self.records[key] = block
+                self.manifest['pages'][number-1]['blocks'].append(block)
+            elif dict(page=number,bbox=bbox) not in self.records[key]['occurrences']:
+                self.records[key]['occurrences'].append(dict(page=number,bbox=bbox))
+
+    def translate(self, text, page):
+        key = self.block_id(text,page); self.seen.add(key)
+        if self.targets is None:
+            return text
+        value = self.targets.get(key)
+        if not isinstance(value, str) or not value.strip() or placeholders(value) != placeholders(text):
+            self.errors.append('PDF_TRANSLATION_OR_FORMULA_MISSING: ' + key)
+            return text  # Never enter upstream's unbounded retries; fail before publishing instead.
+        return value
+
+
+def run_engine(data, manifest, targets=None, min_font_size=.5):
     fitz = engine()
-    doc = fitz.open(path)
-    if not doc.is_pdf or doc.needs_pass or doc.is_repaired or not len(doc):
-        doc.close()
-        raise ValueError('PDF_SOURCE_INVALID: encrypted, damaged, non-PDF or empty source. Supply an intact unlocked PDF.')
-    return doc
+    # Analyze in unrotated page coordinates. Upstream's normal layout mask and
+    # pdfminer disagree on /Rotate for cropped pages; restore metadata afterward.
+    with fitz.open(stream=data) as original:
+        rotations=[p.rotation for p in original]
+        for p in original:p.set_rotation(0)
+        data=original.tobytes()
+    import pdf2zh.high_level as high
+    import pdfmath_converter as local
+    from pdf2zh import ocr
+    bridge = Bridge(manifest, targets, min_font_size)
+    class AgentTranslator:
+        name = 'agent-bridge'
+        def __init__(self, lang_in, lang_out, *args, **kwargs):
+            self.lang_in, self.lang_out, self.bridge = lang_in, lang_out, bridge
+        def translate(self, text):
+            return bridge.translate(text, 1)
+    local.GoogleTranslator = AgentTranslator
+    high.TranslateConverter = local.TranslateConverter
+    old_ocr = ocr.translate_ocr_page
+    def ocr_page(page, detection, translator, font, thread, cancellation_event=None):
+        # Use upstream's OCR grouping and typesetting; register its actual jobs first.
+        groups = ocr.ocr_paragraphs(page, detection)
+        for bounds, source, size, words in groups:
+            key = bridge.block_id(source,page.number+1)
+            if key not in bridge.records:
+                block = dict(id=key,source=source,bbox=list(bounds),font_size=size,rotation=0,
+                             occurrences=[dict(page=page.number+1,bbox=list(bounds))])
+                bridge.records[key]=block;manifest['pages'][page.number]['blocks'].append(block)
+        if groups:
+            manifest['pages'][page.number]['review_required'] = True
+        if targets is not None:
+            # Exercise the same upstream OCR font/CSS fitting before it renders;
+            # upstream's scale_low=0 would otherwise allow arbitrarily tiny text.
+            archive=fitz.Archive((font.buffer,'ocr.ttf'))
+            with fitz.open() as probe:
+                target=probe.new_page(width=page.rect.width,height=page.rect.height)
+                for bounds,source,size,_ in groups:
+                    key=bridge.block_id(source,page.number+1)
+                    text=targets.get(key,'')
+                    centered=any(detection.names[int(box.cls)]=='title' and
+                        (fitz.Rect(*box.xyxy)&bounds).get_area()>bounds.get_area()/2 for box in detection.boxes)
+                    align='center' if centered else 'justify'
+                    css=('@font-face {font-family:ocr;src:url(ocr.ttf);}'
+                         f'body {{font-family:ocr;font-size:{size}pt;line-height:1.2;margin:0;}}'
+                         f'p {{margin:0;overflow-wrap:break-word;text-align:{align};}}')
+                    spare,scale=target.insert_htmlbox(bounds,'<p>'+html.escape(text)+'</p>',css=css,
+                        archive=archive,scale_low=min(1,min_font_size/max(size,.1)))
+                    if spare<0 or size*scale<min_font_size-.01:
+                        raise ValueError('PDF_TEXT_DOES_NOT_FIT: '+key)
+        from types import SimpleNamespace
+        proxy=SimpleNamespace(translate=lambda text:bridge.translate(text,page.number+1))
+        return old_ocr(page,detection,proxy,font,thread,cancellation_event)
+    ocr.translate_ocr_page = ocr_page
+    mode = manifest['engine']['layout']
+    model = None
+    if mode == 'standard':
+        from pdf2zh.doclayout import OnnxModel
+        model = OnnxModel.from_pretrained()
+    try:
+        mono, _ = high.translate_stream(data,lang_in=manifest['engine']['source_language'],
+                         lang_out=language_code(manifest.get('language','English')),
+                         service='agent-bridge', thread=1 if targets is None else 4,
+                         model=model,ultrafast=mode=='native-fast',ignore_cache=True,skip_subset_fonts=True)
+    finally:
+        ocr.translate_ocr_page = old_ocr
+    if bridge.errors:
+        raise ValueError('; '.join(sorted(set(bridge.errors))[:12]))
+    if targets is not None and bridge.seen != set(targets):
+        raise ValueError('PDF_ENGINE_JOB_CHANGED: re-extract before exporting.')
+    with fitz.open(stream=mono) as output:
+        for page,rotation in zip(output,rotations):page.set_rotation(rotation)
+        mono=output.tobytes(garbage=3,deflate=True)
+    return mono, bridge
+
+
+def new_manifest(source, language, layout, source_language):
+    fitz=engine()
+    with fitz.open(source) as doc:
+        if doc.is_encrypted or not doc.page_count:
+            raise ValueError('PDF_INPUT: empty or encrypted input.')
+        pages=[]
+        for i,page in enumerate(doc):
+            for block in page.get_text('dict')['blocks']:
+                for line in block.get('lines',[]):
+                    direction=line.get('dir',(1,0))
+                    if abs(direction[0]-1)>.01 or abs(direction[1])>.01:
+                        raise ValueError(f'PDF_TEXT_ROTATION_UNSUPPORTED: page {i+1}; rotated text must be normalized before translation.')
+            has_images=bool(page.get_images())
+            has_text=bool(page.get_text().strip())
+            if layout=='native-fast' and has_images and not has_text:
+                raise ValueError(f'PDF_OCR_REQUIRED: page {i+1}; use --layout standard, not native-fast.')
+            pages.append(dict(page=i+1,width=page.rect.width,height=page.rect.height,rotation=page.rotation,
+                              cropbox=list(page.cropbox),review_required=has_images,blocks=[]))
+    return dict(schema=SCHEMA,source=str(Path(source).resolve()),sha256=sha(source),page_count=len(pages),
+                language=language,engine=dict(name='PDFMathTranslate',version='1.9.12',commit=ENGINE_COMMIT,
+                layout=layout,source_language=language_code(source_language)),pages=pages)
 
 
 def extract(args):
-    source = Path(args.input).resolve()
-    manifest_path = Path(args.manifest).resolve()
-    if source == manifest_path:
-        raise ValueError('Do not overwrite the source PDF.')
-    manifest = dict(schema=SCHEMA, source=str(source), sha256=sha(source), pages=[])
-    with open_source(source) as doc:
-        manifest['page_count'] = len(doc)
-        for index, page in enumerate(doc):
-            has_images = bool(page.get_image_info())
-            native = page.get_text('text').strip()
-            use_ocr = args.ocr == 'always' or (args.ocr == 'auto' and (has_images or not native))
-            textpage = None
-            if use_ocr:
-                try:
-                    # Partial OCR retains digital text and recognizes image regions in mixed pages.
-                    textpage = page.get_textpage_ocr(language=args.ocr_language, dpi=200,
-                                                     full=args.ocr == 'always' or not native)
-                except Exception as exc:
-                    raise ValueError(f'PDF_OCR_FAILED: page {index + 1}; check Tesseract and {args.ocr_language} language data. {exc}') from exc
-            blocks = []
-            for raw in page.get_text('blocks', textpage=textpage, sort=True):
-                text = raw[4].strip()
-                if raw[6] != 0 or not text:
-                    continue
-                blocks.append(dict(id=f'p{index + 1}-b{len(blocks) + 1}', source=text, bbox=list(raw[:4])))
-            manifest['pages'].append(dict(page=index + 1, width=page.rect.width, height=page.rect.height,
-                                          extraction='ocr' if use_ocr else 'text',
-                                          review_required=use_ocr or has_images or not blocks, blocks=blocks))
-    write_json(manifest_path, manifest)
-    print(json.dumps(dict(manifest=str(manifest_path), pages=manifest['page_count'],
-                          blocks=sum(len(p['blocks']) for p in manifest['pages']),
-                          review_pages=[p['page'] for p in manifest['pages'] if p['review_required']])))
+    manifest=new_manifest(args.input,args.language,args.layout,args.source_language)
+    if args.ocr_language:
+        os.environ['PDF2ZH_OCR_LANGUAGE']=args.ocr_language
+    manifest['engine']['ocr_language']=os.environ.get('PDF2ZH_OCR_LANGUAGE','')
+    _, bridge=run_engine(Path(manifest['source']).read_bytes(),manifest)
+    if not bridge.records and any(p['review_required'] for p in manifest['pages']):
+        raise ValueError('PDF_OCR_EMPTY: no translatable text found; inspect source and OCR data.')
+    write_json(args.manifest,manifest)
+    print(json.dumps(dict(manifest=str(Path(args.manifest).resolve()),pages=manifest['page_count'],blocks=len(bridge.records),engine=manifest['engine'])))
 
 
 def validate(manifest, translations):
-    if manifest.get('schema') != SCHEMA:
-        raise ValueError('PDF_MANIFEST_SCHEMA: unsupported manifest version.')
-    if sha(manifest['source']) != manifest['sha256']:
-        raise ValueError('PDF_SOURCE_CHANGED: re-extract the current source before exporting.')
-    pages = manifest['pages']
-    if len(pages) != manifest['page_count'] or [p['page'] for p in pages] != list(range(1, len(pages) + 1)):
-        raise ValueError('PDF_PAGE_COVERAGE: missing, duplicate or reordered pages.')
-    ids = [b['id'] for p in pages for b in p['blocks']]
-    if len(set(ids)) != len(ids):
-        raise ValueError('PDF_DUPLICATE_BLOCK: duplicate block IDs.')
-    targets = translations.get('translations', {})
-    if not isinstance(targets, dict) or set(targets) != set(ids):
-        missing = sorted(set(ids) - set(targets)) if isinstance(targets, dict) else ids
-        raise ValueError(f'PDF_TRANSLATION_COVERAGE: every ID must appear exactly once. Missing: {missing[:20]}')
-    if not isinstance(translations.get('language'), str) or not translations['language'].strip():
-        raise ValueError('PDF_TARGET_LANGUAGE: specify language in the translation JSON.')
-    for page in pages:
-        for block in page['blocks']:
-            value = targets[block['id']]
-            if not isinstance(value, str) or not value.strip() or '\x00' in value:
-                raise ValueError(f'PDF_EMPTY_TRANSLATION: {block["id"]}')
-            for term in translations.get('protected_terms', []):
-                if term in block['source'] and term not in value:
-                    raise ValueError(f'PDF_PROTECTED_TERM: {block["id"]} lacks {term}')
-        if page['review_required']:
-            review = translations.get('page_reviews', {}).get(str(page['page']))
-            expected = 'checked' if page['blocks'] else 'no_text'
-            if review != expected:
-                raise ValueError(f'PDF_VISUAL_REVIEW_REQUIRED: inspect source page {page["page"]}; then set page_reviews to {expected!r}.')
-    return dict(pages=len(pages), blocks=len(ids), language=translations['language'])
-
-
-def escaped(text):
-    return html.escape(text).replace('\n', '<br>')
+    if manifest.get('schema')!=SCHEMA:
+        raise ValueError('PDF_MANIFEST_SCHEMA: re-extract using PDFMathTranslate.')
+    if sha(manifest['source'])!=manifest['sha256']:
+        raise ValueError('PDF_SOURCE_CHANGED: re-extract.')
+    pages=manifest['pages']
+    if len(pages)!=manifest['page_count'] or [p['page'] for p in pages]!=list(range(1,len(pages)+1)):
+        raise ValueError('PDF_PAGE_COVERAGE')
+    blocks=[b for p in pages for b in p['blocks']];ids=[b['id'] for b in blocks]
+    targets=translations.get('translations',{})
+    if len(set(ids))!=len(ids) or not isinstance(targets,dict) or set(ids)!=set(targets):
+        raise ValueError('PDF_TRANSLATION_COVERAGE: missing, duplicate or extra IDs.')
+    if not translations.get('language','').strip():
+        raise ValueError('PDF_TARGET_LANGUAGE')
+    for block in blocks:
+        value=targets[block['id']]
+        if not isinstance(value,str) or not value.strip() or '\x00' in value:
+            raise ValueError('PDF_EMPTY_TRANSLATION: '+block['id'])
+        if placeholders(value)!=placeholders(block['source']):
+            raise ValueError('PDF_FORMULA_PLACEHOLDERS: '+block['id'])
+        for term in translations.get('protected_terms',[]):
+            if term in block['source'] and term not in value:
+                raise ValueError('PDF_PROTECTED_TERM: '+block['id'])
+    for p in pages:
+        if p['review_required']:
+            expected='checked' if p['blocks'] else 'no_text'
+            if translations.get('page_reviews',{}).get(str(p['page']))!=expected:
+                raise ValueError('PDF_VISUAL_REVIEW_REQUIRED: '+str(p['page']))
+    return dict(pages=len(pages),blocks=len(ids),language=translations['language'])
 
 
 def export(args):
-    fitz = engine()
-    manifest, translations = load(args.manifest), load(args.translations)
-    summary = validate(manifest, translations)
-    source = Path(manifest['source']).resolve()
-    out = Path(args.output_dir).resolve()
-    out.mkdir(parents=True, exist_ok=True)
-    language = re.sub(r'[^\w.-]+', '_', translations['language'], flags=re.UNICODE).strip('._') or 'translated'
-    stem = f'{source.stem}_{language}_bilingual'
-    names = [stem + ext for ext in ['.pdf', '.md', '.html', '.validation.json']]
-    if source in [(out / n).resolve() for n in names]:
-        raise ValueError('Do not overwrite the source file.')
-    target = translations['translations']
-    md = [f'# {source.name} / {translations["language"]}', '']
-    sections, mappings = [], []
-    # Build all artifacts in a private staging directory. Publish only after validation.
-    with tempfile.TemporaryDirectory(prefix='.translation-', dir=out) as temp:
-        temp = Path(temp)
-        result = fitz.open()
-        try:
-            with open_source(source) as original:
-                if len(original) != manifest['page_count']:
-                    raise ValueError('PDF_PAGE_COVERAGE: source page count differs from manifest.')
-                for page_info in manifest['pages']:
-                    index = page_info['page'] - 1
-                    source_output_index = len(result)
-                    result.insert_pdf(original, from_page=index, to_page=index)
-                    md.extend([f'## Page {index + 1}', ''])
-                    body = [f'<h1>Page {index + 1} / {html.escape(translations["language"])}</h1>']
-                    for block in page_info['blocks']:
-                        body.append(f'<p class="label">{html.escape(block["id"])}</p><p>{escaped(target[block["id"]])}</p>')
-                        md.extend([f'### {block["id"]}', '', '**Source**', '', block['source'], '', '**Translation**', '', target[block['id']], ''])
-                    if not page_info['blocks']:
-                        body.append('<p>Visually reviewed: no translatable text on this page.</p>')
-                    story = fitz.Story(html=''.join(body), user_css='body {font-family: sans-serif; font-size:11pt; line-height:1.3;} h1 {font-size:18pt;color:#c7000b;} .label {font-size:8pt;color:#777;} p {overflow-wrap:break-word;}')
-                    paper = fitz.paper_rect('a4')
-                    def rectfn(number, filled):
-                        if number > 2000:
-                            raise ValueError('PDF_LAYOUT_LIMIT: translation is too long for one source page.')
-                        return paper, paper + (36, 36, -36, -36), None
-                    translated_doc = story.write_with_links(rectfn)
-                    try:
-                        first_translation = len(result)
-                        result.insert_pdf(translated_doc)
-                        mappings.append(dict(source_page=index + 1, original_output_page=source_output_index + 1,
-                                             translation_start=first_translation + 1, translation_end=len(result)))
-                    finally:
-                        translated_doc.close()
-                    image = base64.b64encode(original[index].get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False).tobytes('png')).decode()
-                    sections.append(f'<section><h2>Page {index + 1}</h2><div class="pair"><img alt="Source page {index + 1}" src="data:image/png;base64,{image}"><article>{"".join(body)}</article></div></section>')
-                result.set_toc([[1, f'Source page {m["source_page"]}', m['original_output_page']] for m in mappings])
-                candidate = temp / names[0]
-                result.save(candidate, garbage=4, deflate=True)
-        finally:
-            result.close()
-        with open_source(source) as original, open_source(candidate) as reopened:
-            if len(reopened) != mappings[-1]['translation_end']:
-                raise ValueError('PDF_OUTPUT_PAGE_COUNT: page count changed after writing.')
-            for page_info, mapping in zip(manifest['pages'], mappings):
-                # Verify every original page still renders identically, including diagrams.
-                a = original[page_info['page'] - 1].get_pixmap(matrix=fitz.Matrix(.5, .5), alpha=False)
-                b = reopened[mapping['original_output_page'] - 1].get_pixmap(matrix=fitz.Matrix(.5, .5), alpha=False)
-                if (a.width, a.height, a.samples) != (b.width, b.height, b.samples):
-                    raise ValueError(f'PDF_ORIGINAL_RENDER_CHANGED: page {page_info["page"]}')
-                text = ''.join(reopened[i].get_text() for i in range(mapping['translation_start'] - 1, mapping['translation_end']))
-                for block in page_info['blocks']:
-                    if normalized(target[block['id']]) not in normalized(text):
-                        raise ValueError(f'PDF_RENDERED_TEXT_MISSING: {block["id"]}; inspect fonts, layout and supported characters.')
-                for index in range(mapping['translation_start'] - 1, mapping['translation_end']):
-                    reopened[index].get_pixmap(matrix=fitz.Matrix(.5, .5), alpha=False)
-            summary.update(output_pages=len(reopened), mappings=mappings, render_checked=True,
-                           original_pages_pixel_checked=True, rendered_translation_coverage=True)
-        (temp / names[1]).write_text('\n'.join(md), encoding='utf-8')
-        css = 'body{font-family:system-ui,sans-serif;margin:24px;color:#17202a}section{margin-bottom:32px}.pair{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}img{width:100%;border:1px solid #ddd}article{overflow-wrap:anywhere}.label{color:#777;font-size:12px}h1{color:#c7000b;font-size:22px}@media(max-width:700px){.pair{grid-template-columns:1fr}}@media print{section{break-before:page}}'
-        (temp / names[2]).write_text('<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bilingual document</title><style>' + css + '</style><body>' + ''.join(sections) + '</body></html>', encoding='utf-8')
-        expected_hash = sha(candidate)
-        summary.update(source_sha256=manifest['sha256'], pdf_sha256=expected_hash,
-                       limits='Checks prove extracted-block coverage and file rendering, not semantic translation accuracy or OCR completeness. Visual review is required.')
-        write_json(temp / names[3], summary)
-        for name in names:
-            os.replace(temp / name, out / name)
-        if sha(out / names[0]) != expected_hash:
-            raise ValueError('PDF_SAVED_HASH: final file differs from validated candidate.')
-    print(json.dumps(dict(files=[str(out / n) for n in names], **summary), ensure_ascii=False))
-
-
-def inspect(args):
-    fitz = engine()
-    out = Path(args.output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    with open_source(args.input) as doc:
-        indices = range(len(doc)) if not args.pages else [int(x) - 1 for x in args.pages.split(',')]
-        for index in indices:
-            doc[index].get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False).save(out / f'page-{index + 1}.png')
-    print(str(out.resolve()))
+    if not .5 <= args.min_font_size <= 36:raise ValueError('PDF_MIN_FONT_SIZE: choose 0.5..36 pt.')
+    manifest=load(args.manifest);translations=load(args.translations)
+    summary=validate(manifest,translations)
+    if manifest['engine'].get('ocr_language'):
+        os.environ['PDF2ZH_OCR_LANGUAGE']=manifest['engine']['ocr_language']
+    current=new_manifest(manifest['source'],translations['language'],manifest['engine']['layout'],manifest['engine']['source_language'])
+    mono,_=run_engine(Path(manifest['source']).read_bytes(),current,translations['translations'],args.min_font_size)
+    fitz=engine();folder=Path(args.output_dir).resolve();folder.mkdir(parents=True,exist_ok=True)
+    stem=Path(manifest['source']).stem+'_'+re.sub(r'[^\w-]','_',translations['language'])
+    reserved={Path(manifest['source']).resolve(),Path(args.manifest).resolve(),Path(args.translations).resolve()}
+    with tempfile.TemporaryDirectory(prefix='.pdfmath-',dir=folder) as temp:
+        stage=Path(temp)
+        with fitz.open(manifest['source']) as source, fitz.open(stream=mono) as translated, fitz.open() as dual:
+            if translated.page_count!=source.page_count:raise ValueError('PDF_PAGE_COUNT')
+            images=[]
+            for i in range(source.page_count):
+                if list(source[i].rect)!=list(translated[i].rect) or source[i].rotation!=translated[i].rotation or list(source[i].cropbox)!=list(translated[i].cropbox):
+                    raise ValueError('PDF_GEOMETRY_CHANGED: '+str(i+1))
+                dual.insert_pdf(source,from_page=i,to_page=i)
+                dual.insert_pdf(translated,from_page=i,to_page=i)
+                images += [base64.b64encode(p.get_pixmap(matrix=fitz.Matrix(1.5,1.5),alpha=False).tobytes('png')).decode() for p in (source[i],translated[i])]
+            pdf=stage/(stem+'_bilingual.pdf');dual.save(pdf,garbage=3,deflate=True)
+        with fitz.open(manifest['source']) as source,fitz.open(pdf) as result:
+            if result.page_count!=2*source.page_count:raise ValueError('PDF_OUTPUT_PAGE_COUNT')
+            for i,p in enumerate(source):
+                if p.get_pixmap().samples!=result[2*i].get_pixmap().samples:raise ValueError('PDF_ORIGINAL_CHANGED')
+        (stage/(stem+'_compare.html')).write_text('<!doctype html><meta charset="utf-8"><title>PDFMathTranslate</title><style>body{background:#ddd}img{display:block;max-width:95%;margin:12px auto;page-break-after:always}</style>'+''.join('<img alt="'+('Original' if i%2==0 else 'Translation')+'" src="data:image/png;base64,'+value+'">' for i,value in enumerate(images)),encoding='utf-8')
+        lines=['# '+translations['language']]
+        for p in manifest['pages']:
+            lines += ['\n## Page '+str(p['page'])]
+            for b in p['blocks']:lines += [b['source'],'',translations['translations'][b['id']],'']
+        (stage/(stem+'.md')).write_text('\n'.join(lines),encoding='utf-8')
+        report=dict(**summary,engine=manifest['engine'],output_pages=summary['pages']*2,source_pixels_verified=True,
+                    layout='PDFMathTranslate in-place white/black',depth=translations.get('depth','direct'),
+                    quality_checks=translations.get('quality_checks',{}))
+        write_json(stage/(stem+'.validation.json'),report)
+        for file in stage.iterdir():
+            if (folder/file.name).resolve() in reserved:raise ValueError('PDF_OUTPUT_RESERVED')
+        for file in stage.iterdir():os.replace(file,folder/file.name)
+    print(json.dumps(dict(output=str(folder/(stem+'_bilingual.pdf')),**report)))
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    sub = parser.add_subparsers(dest='command', required=True)
-    p = sub.add_parser('extract')
-    p.add_argument('input'); p.add_argument('--manifest', required=True)
-    p.add_argument('--ocr', choices=['auto', 'always', 'never'], default='auto')
-    p.add_argument('--ocr-language', default='eng')
-    p = sub.add_parser('validate')
-    p.add_argument('manifest'); p.add_argument('translations')
-    p = sub.add_parser('export')
-    p.add_argument('manifest'); p.add_argument('translations'); p.add_argument('--output-dir', required=True)
-    p = sub.add_parser('inspect')
-    p.add_argument('input'); p.add_argument('--output-dir', required=True); p.add_argument('--pages')
-    args = parser.parse_args()
+    parser=argparse.ArgumentParser(description=__doc__);cmd=parser.add_subparsers(dest='command',required=True)
+    p=cmd.add_parser('extract');p.add_argument('input');p.add_argument('--manifest',required=True)
+    p.add_argument('--language',default='English');p.add_argument('--source-language',default='en')
+    p.add_argument('--layout',choices=['standard','native-fast'],default='standard');p.add_argument('--ocr-language')
+    p=cmd.add_parser('validate');p.add_argument('manifest');p.add_argument('translations')
+    p=cmd.add_parser('export');p.add_argument('manifest');p.add_argument('translations');p.add_argument('--output-dir',required=True)
+    p.add_argument('--min-font-size',type=float,default=3.5)
+    p=cmd.add_parser('inspect');p.add_argument('manifest')
+    args=parser.parse_args()
     try:
-        if args.command == 'validate':
-            print(json.dumps(validate(load(args.manifest), load(args.translations)), ensure_ascii=False))
-        else:
-            globals()[args.command](args)
+        if args.command=='validate':print(json.dumps(validate(load(args.manifest),load(args.translations))))
+        elif args.command=='inspect':
+            m=load(args.manifest);print(json.dumps(dict(pages=m['page_count'],blocks=sum(len(p['blocks']) for p in m['pages']),engine=m['engine'])))
+        else:globals()[args.command](args)
     except Exception as exc:
-        print(f'ERROR: {exc}', file=sys.stderr)
-        return 1
+        print('ERROR: '+str(exc),file=sys.stderr);return 1
     return 0
 
-
-if __name__ == '__main__':
-    sys.exit(main())
+if __name__=='__main__':sys.exit(main())

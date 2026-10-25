@@ -811,12 +811,12 @@ function collectAppSettings(options = {}) {
     translation:{
       targetLanguages:selectedLangs(), customLanguages:DEFAULT_LANGS.filter(lang => !BASE_LANGS.includes(lang)),
       sourceLang:fieldValue('sourceLang'), docSourceLang:fieldValue('docSourceLang'),
-      workflowMode:fieldValue('workflowMode'), docWorkflowMode:fieldValue('docWorkflowMode'), outputMode:fieldValue('outputMode'),
+      workflowMode:fieldValue('workflowMode'), docWorkflowMode:fieldValue('docWorkflowMode'), docPdfLayout:fieldValue('docPdfLayout'), outputMode:fieldValue('outputMode'),
       concurrency:fieldValue('concurrency'), retries:fieldValue('retries'), docConcurrency:fieldValue('docConcurrency'), docRetries:fieldValue('docRetries'),
       countryGlobal:fieldValue('countryGlobal'), translationMemoryMode:fieldValue('translationMemoryMode'),
       protectedTerms:fieldValue('protectedTerms'), customRules:fieldValue('customRules'),
       docOutputMarkdown:fieldChecked('docOutputMarkdown'), docOutputDocx:fieldChecked('docOutputDocx'),
-      docOutputHtml:fieldChecked('docOutputHtml'), docTranslateImages:fieldChecked('docTranslateImages'),
+      docOutputPdf:fieldChecked('docOutputPdf'), docOutputHtml:fieldChecked('docOutputHtml'), docTranslateImages:fieldChecked('docTranslateImages'),
     },
   };
 }
@@ -839,9 +839,9 @@ function applyAppSettings(rawData) {
   });
   renderLanguages();
   selectLangs(Array.isArray(translation.targetLanguages) && translation.targetLanguages.length ? translation.targetLanguages : ['English']);
-  ['sourceLang','docSourceLang','workflowMode','docWorkflowMode','outputMode','concurrency','retries','docConcurrency','docRetries','countryGlobal','translationMemoryMode','protectedTerms','customRules']
+  ['sourceLang','docSourceLang','workflowMode','docWorkflowMode','docPdfLayout','outputMode','concurrency','retries','docConcurrency','docRetries','countryGlobal','translationMemoryMode','protectedTerms','customRules']
     .forEach(key => setFieldValue(key, translation[key]));
-  ['docOutputMarkdown','docOutputDocx','docOutputHtml','docTranslateImages'].forEach(key => setFieldChecked(key, translation[key]));
+  ['docOutputPdf','docOutputMarkdown','docOutputDocx','docOutputHtml','docTranslateImages'].forEach(key => setFieldChecked(key, translation[key]));
   updateLangSummaries();
   updateModelStatus(fieldValue('apiKey').trim() ? 'untested' : 'unset');
   return data;
@@ -1204,8 +1204,14 @@ async function workflowTranslate(sourceText, sourceLang, targetLang, country, ru
     return await chat(promptImprove(sourceLang, targetLang, sourceText, '', 'Translate the source text directly and produce a polished final translation.', rules), logId);
   }
   const initial = await chat(promptTranslation(sourceLang, targetLang, sourceText, rules), logId);
+  if(workflowMode==='reviewed')return await chat(promptImprove(sourceLang,targetLang,sourceText,initial,'Compare the draft against the source, correct accuracy, omissions, numbers and formula placeholders; return only the revised translation.',rules),logId);
   const suggestions = await chat(promptSuggestions(sourceLang, targetLang, sourceText, initial, country, rules, standardTranslation), logId);
-  return await chat(promptImprove(sourceLang, targetLang, sourceText, initial, suggestions, rules), logId);
+  let revised=await chat(promptImprove(sourceLang, targetLang, sourceText, initial, suggestions, rules), logId);
+  if(workflowMode==='multi-pass'){
+    revised=await chat(promptImprove(sourceLang,targetLang,sourceText,revised,'Review terminology and consistency against the source; correct the draft and return only the translation.',rules),logId);
+    revised=await chat(promptImprove(sourceLang,targetLang,sourceText,revised,'Perform a final source comparison for facts, numbers, units and formula placeholders. Return only the complete final translation.',rules),logId);
+  }
+  return revised;
 }
 function buildTasksForRows(rows, headers, meta) {
   const srcIdx = findCol(headers, meta.sourceCol);
@@ -1411,128 +1417,63 @@ function isLikelyText(text) {
   if (!/\p{L}/u.test(normalized)) return false;
   return normalized.length >= 2;
 }
-function groupPdfTextItems(items) {
-  const normalized = (items || []).map(item => ({
-    text: String(item.str || '').replace(/\s+/g, ' ').trim(),
-    x: item.transform?.[4] || 0,
-    y: item.transform?.[5] || 0,
-    w: Math.abs(item.width || 0),
-    h: Math.abs(item.height || item.transform?.[0] || 10),
-  })).filter(item => item.text);
-  normalized.sort((a, b) => Math.abs(a.y - b.y) < 3 ? a.x - b.x : b.y - a.y);
-  const lines = [];
-  for (const token of normalized) {
-    const last = lines[lines.length - 1];
-    if (!last || Math.abs(last.y - token.y) > Math.max(4, token.h * 0.6)) {
-      lines.push({ y: token.y, height: token.h, parts:[token.text], x0: token.x, x1: token.x + token.w });
-    } else {
-      last.parts.push(token.text);
-      last.height = Math.max(last.height, token.h);
-      last.x0 = Math.min(last.x0, token.x);
-      last.x1 = Math.max(last.x1, token.x + token.w);
-    }
+async function pdfEngineRequest(payload) {
+  const response=await fetch('/api/pdf-engine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const data=await response.json();
+  if(!response.ok||data.error)throw new Error(data.error||'PDFMathTranslate 引擎失败');
+  return data;
+}
+async function extractPdfDocument(file, sourceLang) {
+  if(state.cancel)throw new Error('PDF 解析已取消。');
+  const bytes=new Uint8Array(await file.arrayBuffer());
+  let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));
+  log('documentLog','PDFMathTranslate 正在解析 '+file.name+'；首次运行可能下载版面模型和字体。');
+  const prepared=await pdfEngineRequest({op:'prepare',pdf:btoa(binary),source_language:sourceLang,
+    language:selectedLangs()[0]||'English',layout:$('docPdfLayout')?.value||'standard'});
+  const reviewPages=prepared.manifest.pages.filter(p=>p.review_required);
+  if(reviewPages.length){
+    const panel=$('pdfRecognizedText');panel.replaceChildren();
+    const source=document.createElement('a');source.textContent='打开源 PDF 核对';source.href=URL.createObjectURL(file);source.target='_blank';source.rel='noopener';panel.append(source);
+    for(const page of reviewPages){const details=document.createElement('details'),title=document.createElement('summary'),pre=document.createElement('pre');title.textContent='第 '+page.page+' 页识别文字';pre.textContent=page.blocks.map(b=>b.source).join('\n');details.append(title,pre);panel.append(details);}
+    $('docPdfReviewConfirmed').checked=false;const button=$('docPdfReviewContinueBtn');button.classList.remove('hidden');
+    log('documentLog','请核对含图片页的识别文字，再勾选确认并继续。混排页中的图片文字需要特别检查；发现缺字时停止并先做 OCR。');
+    try{await new Promise((resolve,reject)=>{
+      const next=()=>{if(!$('docPdfReviewConfirmed').checked){showToast('请先核对识别结果并勾选确认。');return;}cleanup();resolve();};
+      const cancel=()=>{cleanup();reject(new Error('PDF 翻译已取消。'));};
+      const cleanup=()=>{button.removeEventListener('click',next);$('cancelDocumentBtn').removeEventListener('click',cancel);};
+      button.addEventListener('click',next);$('cancelDocumentBtn').addEventListener('click',cancel);
+    });}finally{button.classList.add('hidden');URL.revokeObjectURL(source.href);}
   }
-  const blocks = [];
-  let current = null;
-  lines.forEach(line => {
-    const text = line.parts.join(' ').replace(/\s+/g, ' ').trim();
-    if (!text) return;
-    if (!current || Math.abs(current.prevY - line.y) > Math.max(14, line.height * 1.8)) {
-      current = { texts:[text], prevY: line.y, x0: line.x0, x1: line.x1, y0: line.y, y1: line.y + line.height };
-      blocks.push(current);
-    } else {
-      current.texts.push(text);
-      current.prevY = line.y;
-      current.x0 = Math.min(current.x0, line.x0);
-      current.x1 = Math.max(current.x1, line.x1);
-      current.y0 = Math.min(current.y0, line.y);
-      current.y1 = Math.max(current.y1, line.y + line.height);
-    }
-  });
-  return blocks
-    .map((block, index) => ({ id:`text-${index + 1}`, text:block.texts.join('\n').trim(), bbox:{ x0:block.x0, y0:block.y0, x1:block.x1, y1:block.y1 } }))
-    .filter(block => block.text.trim());
+  return {type:'pdf',name:file.name,job:prepared.job,manifest:prepared.manifest,
+    pages:prepared.manifest.pages.map(p=>({...p,pageNo:p.page,blocks:p.blocks.map(b=>({...b,text:b.source}))}))};
 }
-function splitOcrText(text) {
-  return String(text || '').split(/\n{2,}/).map(part => part.replace(/[ \t]+/g, ' ').replace(/\n/g, ' ').trim()).filter(Boolean);
-}
-async function renderPdfPageToCanvas(page, scale) {
-  const viewport = page.getViewport({ scale });
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  canvas.width = Math.ceil(viewport.width);
-  canvas.height = Math.ceil(viewport.height);
-  await page.render({ canvasContext: ctx, viewport }).promise;
-  return canvas;
-}
-function getOcrLanguage(sourceLang) {
-  if (sourceLang === 'Chinese') return 'chi_sim+eng';
-  if (sourceLang === 'English') return 'eng';
-  return 'eng+chi_sim';
-}
-async function extractPdfDocument(file, sourceLang, options) {
-  if (!window.pdfjsLib) throw new Error('PDF 解析组件未加载，请检查网络后重试。');
-  const captureImage = !!(options && options.captureImage);
-  log('documentLog', `开始解析 PDF：${file.name}`);
-  const pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
-  const pages = [];
-  try {
-    for (let i = 1; i <= pdf.numPages; i++) {
-      if (state.cancel) throw new Error('PDF 解析已取消，未生成任何译文文件。');
-      const page = await pdf.getPage(i);
-      const viewport = page.getViewport({ scale: 1 });
-      const textContent = await page.getTextContent();
-      let blocks = groupPdfTextItems(textContent.items || []);
-      let extraction = 'text';
-      let pageCanvas = null;
-      const operators = await page.getOperatorList();
-      const imageOps = ['paintImageXObject','paintInlineImageXObject','paintImageMaskXObject','paintImageXObjectRepeat','paintImageMaskXObjectRepeat','paintInlineImageXObjectGroup','paintImageMaskXObjectGroup'].map(name => window.pdfjsLib.OPS[name]).filter(Number.isFinite);
-      const hasImages = operators.fnArray.some(op => imageOps.includes(op));
-      if (hasImages || !blocks.length || blocks.map(item => item.text).join(' ').length < 24) {
-        extraction = 'ocr';
-        log('documentLog', `第 ${i} 页含图片或文本不足，开始 OCR...`);
-        pageCanvas = await renderPdfPageToCanvas(page, 2);
-        if (!window.Tesseract) throw new Error(`PDF 第 ${i} 页需要 OCR，但 OCR 组件未加载。`);
-        const worker = await getPptxOcrWorker(sourceLang);
-        const result = await worker.recognize(pageCanvas, {}, { text:true, blocks:true });
-        const nativeText = blocks.map(block => block.text).join(' ').replace(/\s+/g, '').toLowerCase();
-        const ocrBlocks = String(result.data.text || '').split(/\n/).map(text => text.trim()).filter(Boolean)
-          .filter(text => !nativeText.includes(text.replace(/\s+/g, '').toLowerCase()))
-          .map((text, index) => ({ id:`ocr-${index + 1}`, text }));
-        // Keep a short native title if OCR cannot improve it. A truly blank page is safe;
-        // a nonblank page with no recognized text requires human review instead of silent loss.
-        if (ocrBlocks.length) blocks = blocks.concat(ocrBlocks);
-        if (!blocks.length && !isPdfCanvasBlank(pageCanvas)) {
-          throw new Error(`PDF_OCR_EMPTY：第 ${i} 页有可见内容，但未识别到文字。请确认是否为纯图表页，或修正 OCR 后重试。`);
-        }
-      }
-      let image = '';
-      if (captureImage) {
-        if (!pageCanvas) pageCanvas = await renderPdfPageToCanvas(page, 1.6);
-        image = pageCanvas.toDataURL('image/jpeg', 0.82);
-      }
-      pages.push({ pageNo:i, extraction, blocks, width:viewport.width, height:viewport.height, image });
-      page.cleanup();
-    }
-    log('documentLog', `PDF 解析完成：${file.name}，共 ${pages.length} 页。`);
-    return { type:'pdf', name:file.name, pages };
-  } finally {
-    await pdf.destroy();
+async function exportPdfMathDocument(doc, lang, results, meta) {
+  validatePdfResultCoverage(doc,results);
+  const page_reviews={};
+  // The workbench exposes OCR pages for explicit user review before publishing.
+  const reviews=doc.pages.filter(p=>p.review_required);
+  if(reviews.length&&!$('docPdfReviewConfirmed')?.checked)throw new Error('PDF_VISUAL_REVIEW_REQUIRED：本文件含图片或 OCR 页。请核对源页与识别文字后勾选“已核对图片/OCR 识别结果”，再导出。');
+  for(const p of reviews)page_reviews[String(p.pageNo)]=p.blocks.length?'checked':'no_text';
+  const depth=meta.workflowMode==='fast'?'direct':meta.workflowMode==='multi-pass'?'multi-pass':'reviewed';
+  const exported=await pdfEngineRequest({op:'export',job:doc.job,translations:{language:lang,depth,
+    quality_checks:depth==='direct'?[]:depth==='reviewed'?['accuracy']:['accuracy','terminology','final'],
+    protected_terms:meta.protectedTerms,page_reviews,
+    translations:Object.fromEntries(collectDocumentTasks(doc).map(t=>[t.id,results.get(t.id).text]))}});
+  for(const file of exported.files){
+    const isPdf=file.name.endsWith('.pdf'),isMd=file.name.endsWith('.md'),isHtml=file.name.endsWith('.html'),isReport=file.name.endsWith('.json');
+    if(!(isPdf&&meta.outputs.pdf||isMd&&meta.outputs.markdown||isHtml&&meta.outputs.html||isReport))continue;
+    const data=Uint8Array.from(atob(file.bytes),x=>x.charCodeAt(0));
+    renderDocumentResult({name:doc.name,lang,kind:isPdf?'PDFMathTranslate 原位对照':isMd?'Markdown':isHtml?'图文对照 HTML':'验证报告',status:'ok',
+      message:isPdf?`${doc.pages.length} 页原文 + ${doc.pages.length} 页原位译文；公式占位符、页数与原页像素检查通过。`:'PDFMathTranslate 输出',
+      blob:new Blob([data],{type:isPdf?'application/pdf':isHtml?'text/html;charset=utf-8':isMd?'text/markdown;charset=utf-8':'application/json'}),downloadName:file.name.replace(/^input_/,fileStem(doc.name)+'_')});
   }
-}
-function isPdfCanvasBlank(canvas) {
-  const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
-  for (let i = 0; i < data.length; i += 4) {
-    if (data[i + 3] && Math.min(data[i], data[i + 1], data[i + 2]) < 245) return false;
-  }
-  return true;
 }
 function validatePdfResultCoverage(doc, results) {
   const failures = [];
   let expected = 0;
   doc.pages.forEach(page => page.blocks.forEach((block, index) => {
     expected++;
-    const id = `page-${page.pageNo}-block-${index + 1}`;
+    const id = block.id || `page-${page.pageNo}-block-${index + 1}`;
     const item = results.get(id);
     if (!item || item.error || !String(item.text || '').trim()) failures.push(id);
   }));
@@ -1754,7 +1695,7 @@ async function extractPptxDocument(file) {
 function collectDocumentTasks(doc) {
   if (doc.type === 'pdf') {
     const tasks = [];
-    doc.pages.forEach(page => page.blocks.forEach((block, index) => tasks.push({ id:`page-${page.pageNo}-block-${index + 1}`, source:block.text })));
+    doc.pages.forEach(page => page.blocks.forEach((block, index) => tasks.push({ id:block.id || `page-${page.pageNo}-block-${index + 1}`, source:block.text })));
     return tasks;
   }
   const tasks = [];
@@ -1900,8 +1841,8 @@ async function translateDocumentToLanguage(doc, targetLang, meta, counter) {
             const regions = await withRetry(() => translatePptxImageTask(task, targetLang, meta), Math.max(2, meta.retries), 'documentLog');
             results.set(task.id, { regions, text:'', warning:`第 ${repairRound} 轮自修复成功`, error:'' });
           } else {
-            const repairMeta = { ...meta, workflowMode:'fast', retries:Math.max(2, meta.retries) };
-            const translated = await withRetry(() => doc.type === 'pptx' ? translatePptxTask(task, targetLang, repairMeta, null) : workflowTranslate(task.source, meta.sourceLang, targetLang, '', { protectedTerms:meta.protectedTerms, customRules:meta.customRules }, 'fast', 'documentLog'), repairMeta.retries, 'documentLog');
+            const repairMeta = { ...meta, workflowMode:doc.type==='pdf'?meta.workflowMode:'fast', retries:Math.max(2, meta.retries) };
+            const translated = await withRetry(() => doc.type === 'pptx' ? translatePptxTask(task, targetLang, repairMeta, null) : workflowTranslate(task.source, meta.sourceLang, targetLang, '', { protectedTerms:meta.protectedTerms, customRules:meta.customRules }, repairMeta.workflowMode, 'documentLog'), repairMeta.retries, 'documentLog');
             if (!String(translated || '').trim()) throw new Error('译文为空');
             const issues = validatePptxTranslationChecklist(task, translated);
             if (issues.length) throw new Error(`自修复译文质检仍未通过：${issues.join('；')}`);
@@ -1946,22 +1887,6 @@ function validatePptxResultCoverage(doc, results, includeImages) {
   }
   return { expected:expected.length, images:expected.filter(item => item.kind === 'image').length };
 }
-function buildPdfMarkdown(doc, lang, results) {
-  const lines = [`# ${doc.name} - ${lang} 双语文档`, '', `- 输出语言：${lang}`, `- 页面数：${doc.pages.length}`, ''];
-  doc.pages.forEach(page => {
-    lines.push(`## 第 ${page.pageNo} 页`, '');
-    if (!page.blocks.length) {
-      lines.push('> 本页未识别到可翻译文本。', '');
-      return;
-    }
-    page.blocks.forEach((block, index) => {
-      const item = results.get(`page-${page.pageNo}-block-${index + 1}`) || { text:'', error:'未生成结果', warning:'' };
-      lines.push(`### 文本块 ${index + 1}`, '', '**原文**', '', block.text || '(空)', '', '**译文**', '', item.error ? `[ERROR] ${item.error}` : (item.text || '(空)'), '');
-      if (item.warning) lines.push(`> Warning: ${item.warning}`, '');
-    });
-  });
-  return lines.join('\n');
-}
 async function buildPdfDocx(doc, lang, results) {
   const d = window.docx;
   const children = [
@@ -1976,7 +1901,7 @@ async function buildPdfDocx(doc, lang, results) {
       rows.push(new d.TableRow({ children:[new d.TableCell({ children:[new d.Paragraph('（空）')] }), new d.TableCell({ children:[new d.Paragraph('（空）')] }), new d.TableCell({ children:[new d.Paragraph('未识别到可翻译文本')] })] }));
     } else {
       page.blocks.forEach((block, index) => {
-        const item = results.get(`page-${page.pageNo}-block-${index + 1}`) || { text:'', error:'未生成结果', warning:'' };
+        const item = results.get(block.id || `page-${page.pageNo}-block-${index + 1}`) || { text:'', error:'未生成结果', warning:'' };
         rows.push(new d.TableRow({ children:[
           new d.TableCell({ children:[new d.Paragraph(block.text || '')] }),
           new d.TableCell({ children:[new d.Paragraph(item.error ? '' : (item.text || ''))] }),
@@ -1988,93 +1913,6 @@ async function buildPdfDocx(doc, lang, results) {
   });
   const docxFile = new d.Document({ sections:[{ children }] });
   return await d.Packer.toBlob(docxFile);
-}
-function pdfBlockRectStyle(block, page) {
-  if (!block.bbox || !page.width || !page.height) return '';
-  const clamp = value => Math.min(100, Math.max(0, value));
-  const left = clamp(block.bbox.x0 / page.width * 100);
-  const top = clamp((page.height - block.bbox.y1) / page.height * 100);
-  const width = clamp((block.bbox.x1 - block.bbox.x0) / page.width * 100);
-  const height = clamp((block.bbox.y1 - block.bbox.y0) / page.height * 100);
-  return `left:${left.toFixed(2)}%;top:${top.toFixed(2)}%;width:${Math.max(width, 0.5).toFixed(2)}%;height:${Math.max(height, 0.5).toFixed(2)}%`;
-}
-function buildPdfComparisonHtml(doc, lang, results) {
-  const out = [];
-  out.push('<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8" />');
-  out.push(`<title>${escapeHtml(doc.name)} - ${escapeHtml(lang)} 图文对照</title>`);
-  out.push('<meta name="viewport" content="width=device-width, initial-scale=1" />');
-  out.push('<style>');
-  out.push('body{margin:0;font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:#f3f4f6;color:#111827;}');
-  out.push('header{position:sticky;top:0;z-index:10;background:#111827;color:#f9fafb;padding:10px 20px;font-size:14px;display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;}');
-  out.push('header b{font-size:16px;}header span{opacity:.75;}');
-  out.push('.page{max-width:1500px;margin:20px auto;padding:0 16px;}');
-  out.push('.page-title{font-size:15px;font-weight:600;margin:0 0 8px;display:flex;gap:8px;align-items:center;}');
-  out.push('.badge{font-size:11px;background:#fde68a;color:#92400e;border-radius:999px;padding:1px 8px;font-weight:500;}');
-  out.push('.layout{display:flex;gap:14px;align-items:flex-start;}');
-  out.push('.preview{flex:0 0 55%;position:sticky;top:52px;}');
-  out.push('.canvasWrap{position:relative;border:1px solid #d1d5db;border-radius:6px;overflow:hidden;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.08);}');
-  out.push('.canvasWrap img{display:block;width:100%;}');
-  out.push('.noimg{padding:48px 16px;text-align:center;color:#6b7280;font-size:13px;}');
-  out.push('.hl{position:absolute;border:2px solid transparent;border-radius:3px;pointer-events:none;transition:all .15s;}');
-  out.push('.hl.active{border-color:#f59e0b;background:rgba(245,158,11,.18);box-shadow:0 0 0 3px rgba(245,158,11,.25);}');
-  out.push('.blocks{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;}');
-  out.push('.block{background:#fff;border:1px solid #e5e7eb;border-left:4px solid #e5e7eb;border-radius:6px;padding:10px 12px;cursor:pointer;}');
-  out.push('.block.active{border-left-color:#f59e0b;background:#fffbeb;}');
-  out.push('.block .num{display:inline-block;font-size:11px;color:#6b7280;background:#f3f4f6;border-radius:999px;padding:0 8px;margin-bottom:6px;}');
-  out.push('.block .tr{white-space:pre-wrap;font-size:14px;line-height:1.65;}');
-  out.push('.block details{margin-top:8px;font-size:12px;color:#6b7280;}');
-  out.push('.block details pre{white-space:pre-wrap;margin:6px 0 0;font-family:inherit;background:#f9fafb;border-radius:4px;padding:6px 8px;}');
-  out.push('.block .warn{margin-top:6px;font-size:12px;color:#b45309;}');
-  out.push('.block .err{margin-top:6px;font-size:12px;color:#b91c1c;}');
-  out.push('.empty{color:#6b7280;font-size:13px;background:#fff;border:1px dashed #d1d5db;border-radius:6px;padding:14px;}');
-  out.push('@media (max-width: 900px){.layout{flex-direction:column;}.preview{position:static;flex:none;width:100%;}}');
-  out.push('@media print{.preview{position:static;}header{position:static;}}');
-  out.push('</style></head><body>');
-  out.push(`<header><b>${escapeHtml(doc.name)}</b><span>译文语言：${escapeHtml(lang)}</span><span>共 ${doc.pages.length} 页</span><span>点击右侧译文块可在左侧原文页上高亮对应位置</span></header>`);
-  doc.pages.forEach(page => {
-    out.push('<section class="page">');
-    out.push(`<h2 class="page-title">第 ${page.pageNo} 页${page.extraction === 'ocr' ? '<span class="badge">OCR 页</span>' : ''}</h2>`);
-    out.push('<div class="layout">');
-    out.push('<div class="preview"><div class="canvasWrap">');
-    if (page.image) {
-      out.push(`<img src="${page.image}" alt="第 ${page.pageNo} 页原文" loading="lazy" />`);
-      page.blocks.forEach((block, index) => {
-        const style = pdfBlockRectStyle(block, page);
-        if (style) out.push(`<div class="hl" id="hl-p${page.pageNo}-b${index}" style="${style}"></div>`);
-      });
-    } else {
-      out.push('<div class="noimg">本页未生成原文截图。</div>');
-    }
-    out.push('</div></div>');
-    out.push('<div class="blocks">');
-    if (!page.blocks.length) {
-      out.push('<div class="empty">本页未识别到可翻译文本。</div>');
-    } else {
-      page.blocks.forEach((block, index) => {
-        const item = results.get(`page-${page.pageNo}-block-${index + 1}`) || { text:'', error:'未生成结果', warning:'' };
-        out.push(`<div class="block" data-hl="hl-p${page.pageNo}-b${index}" tabindex="0">`);
-        out.push(`<span class="num">第 ${page.pageNo} 页 · 块 ${index + 1}</span>`);
-        out.push(`<div class="tr">${item.error ? '' : escapeHtml(item.text || '(空)')}</div>`);
-        if (item.error) out.push(`<div class="err">[ERROR] ${escapeHtml(item.error)}</div>`);
-        if (item.warning) out.push(`<div class="warn">${escapeHtml(item.warning)}</div>`);
-        out.push(`<details><summary>原文</summary><pre>${escapeHtml(block.text || '(空)')}</pre></details>`);
-        out.push('</div>');
-      });
-    }
-    out.push('</div></div></section>');
-  });
-  out.push('<script>');
-  out.push('document.addEventListener("click", function (event) {');
-  out.push('  var block = event.target.closest(".block");');
-  out.push('  if (!block) return;');
-  out.push('  var actives = document.querySelectorAll(".active");');
-  out.push('  for (var i = 0; i < actives.length; i++) actives[i].classList.remove("active");');
-  out.push('  block.classList.add("active");');
-  out.push('  var hl = document.getElementById(block.getAttribute("data-hl") || "");');
-  out.push('  if (hl) hl.classList.add("active");');
-  out.push('});');
-  out.push('<\/script></body></html>');
-  return out.join('\n');
 }
 function nextNumericId(values, fallback) {
   const nums = values.map(value => Number(String(value).replace(/^\D+/, ''))).filter(Number.isFinite);
@@ -2886,7 +2724,7 @@ async function runDocumentTranslate() {
     showToast('已启用 PPT 图片文字翻译，请选择带“多模态”标识的模型，或把模型能力手动设为“多模态”。', 'error');
     return;
   }
-  if (!$('docOutputMarkdown').checked && !$('docOutputDocx').checked && !$('docOutputHtml').checked && !state.documentFiles.some(item => /\.pptx$/i.test(item.name))) {
+  if (!$('docOutputPdf')?.checked && !$('docOutputMarkdown').checked && !$('docOutputDocx').checked && !$('docOutputHtml').checked && !state.documentFiles.some(item => /\.pptx$/i.test(item.name))) {
     showToast('PDF 至少需要勾选一种输出格式。');
     return;
   }
@@ -2916,7 +2754,7 @@ async function runDocumentTranslate() {
     translationMemoryMode: $('translationMemoryMode').value,
     protectedTerms: sharedRules.protectedTerms,
     customRules: sharedRules.customRules,
-    outputs: { markdown: $('docOutputMarkdown').checked, docx: $('docOutputDocx').checked, html: $('docOutputHtml').checked },
+    outputs: { pdf:!!$('docOutputPdf')?.checked, markdown: $('docOutputMarkdown').checked, docx: $('docOutputDocx').checked, html: $('docOutputHtml').checked },
     translateImages: !!$('docTranslateImages')?.checked,
   };
   try {
@@ -2925,7 +2763,7 @@ async function runDocumentTranslate() {
     for (const item of state.documentFiles) {
       if (state.cancel) break;
       try {
-        const doc = /\.pdf$/i.test(item.name) ? await extractPdfDocument(item.file, meta.sourceLang, { captureImage: meta.outputs.html }) : await extractPptxDocument(item.file);
+        const doc = /\.pdf$/i.test(item.name) ? await extractPdfDocument(item.file, meta.sourceLang, { captureImage: meta.outputs.html || meta.outputs.pdf }) : await extractPptxDocument(item.file);
         parsedDocuments.push({ item, doc });
         total += collectDocumentTasks(doc).length * langs.length;
       } catch (error) {
@@ -2947,22 +2785,16 @@ async function runDocumentTranslate() {
           `<td data-label="文件">${escapeHtml(item.name)}</td><td data-label="语言">${escapeHtml(lang)}</td><td data-label="类型">-</td><td data-label="状态"><span class="status pending">进行中</span></td><td data-label="说明">正在翻译…</td><td data-label="下载">-</td>`);
         try {
           log('documentLog', `翻译 ${item.name} -> ${lang}`);
-          const results = await translateDocumentToLanguage(doc, lang, meta, counter);
+          const pdfMeta=doc.type==='pdf'?{...meta,customRules:meta.customRules+'\nPreserve all formula placeholders such as {v0} exactly, including their counts. Never translate or remove them.'}:meta;
+          const results = await translateDocumentToLanguage(doc, lang, pdfMeta, counter);
           if (state.cancel) throw new Error('翻译已取消，未导出不完整结果。');
           if (doc.type === 'pdf') {
-            validatePdfResultCoverage(doc, results);
-            if (meta.outputs.markdown) {
-              const md = buildPdfMarkdown(doc, lang, results);
-              renderDocumentResult({ name:item.name, lang, kind:'Markdown', status:'ok', message:`${doc.pages.length} 页双语 Markdown`, blob:new Blob([md], { type:'text/markdown;charset=utf-8' }), downloadName:`${fileStem(item.name)}_${lang}.md` });
-            }
+            await exportPdfMathDocument(doc,lang,results,meta);
             if (meta.outputs.docx) {
               const blob = await buildPdfDocx(doc, lang, results);
               renderDocumentResult({ name:item.name, lang, kind:'DOCX', status:'ok', message:`${doc.pages.length} 页双语 DOCX`, blob, downloadName:`${fileStem(item.name)}_${lang}.docx` });
             }
-            if (meta.outputs.html) {
-              const html = buildPdfComparisonHtml(doc, lang, results);
-              renderDocumentResult({ name:item.name, lang, kind:'图文对照 HTML', status:'ok', message:`${doc.pages.length} 页原文截图 + 译文对照`, blob:new Blob([html], { type:'text/html;charset=utf-8' }), downloadName:`${fileStem(item.name)}_${lang}_compare.html` });
-            }
+
           } else {
             const coverage = validatePptxResultCoverage(doc, results, meta.translateImages);
             const blob = await buildTranslatedPptx(doc, lang, results);

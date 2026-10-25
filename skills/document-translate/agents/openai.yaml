@@ -1,4 +1,4 @@
 interface:
   display_name: "文档翻译大师"
-  short_description: "翻译 PDF、PPTX 和 CSV，保留原文并严格检查译文覆盖与文件完整性"
-  default_prompt: "使用 $document-translate 将这份文档翻译成 English，保留原文图表，检查漏译并导出双语文件。"
+  short_description: "通过 PDFMathTranslate 保留公式与版面，可选直接翻译或多轮校验，支持 128K 分批及多 Agent"
+  default_prompt: "使用 $document-translate 将这份文档翻译为 English，提供直接翻译或多轮校验选项，保留公式和版面并导出双语文件。"
